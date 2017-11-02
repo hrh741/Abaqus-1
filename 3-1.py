@@ -1,3 +1,4 @@
+#!/usr/bin/python2
 from abaqus import *
 from abaqusConstants import *
 import math
