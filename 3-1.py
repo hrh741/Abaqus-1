@@ -110,7 +110,14 @@ if __name__=='__main__':
   setSym=rootAssembly.Set(faces=rootFaces.findAt(coordinates=wantCentoid),name='Set-Sym') 
   mymodel.ZsymmBC(name='BC-Sym', createStepName='Initial', 
     region=setSym, localCsys=None)
-  mdb.Job(name='Job-1', model='Model-1', description='', type=ANALYSIS, 
+
+  mdb.models['Model-1'].fieldOutputRequests['F-Output-1'].setValues(variables=(
+    'S', 'PE', 'PEEQ', 'PEMAG', 'LE', 'U', 'RF', 'CF', 'CSTRESS', 'CDISP', 
+    'EVOL'), region=MODEL, exteriorOnly=OFF, sectionPoints=DEFAULT, 
+    rebar=EXCLUDE)
+
+  mdb.Job(name='Job-1', model='Model-1',
+      description='', type=ANALYSIS, 
       atTime=None, waitMinutes=0, waitHours=0, queue=None, memory=90, 
       memoryUnits=PERCENTAGE, getMemoryFromAnalysis=True, 
       explicitPrecision=SINGLE, nodalOutputPrecision=SINGLE, echoPrint=OFF, 
