@@ -1,2 +1,7 @@
 temp/
 .vscode/
+*.cae
+*.jnl
+*.rpy.*
+abaqus.rpy
+*.pyc

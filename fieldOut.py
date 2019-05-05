@@ -16,3 +16,17 @@ if __name__=="__main__":
     with open('resulet.txt','w') as fp:
         for f in out.values:
             fp.write("%d\t%f\n"%(f.elementLabel,f.data))
+
+from odbAccess import *
+import sys
+odb=openOdb('E:\Work\Abaqus/temp/a.odb');
+steps=odb.steps;
+laststep=steps[steps.keys()[-1]];
+for frm in laststep.frames:
+    sfo=frm.fieldOutputs['S']
+    setnames=[]
+    for name in setnames:
+        sbfo=sfo.getSubset(region=odb.rootAssembly.elementsets[name])
+        A,B
+        for v in sbfo.values:
+            fprint(v.elemenLabel,v.data) 
