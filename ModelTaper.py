@@ -25,7 +25,11 @@ Drops=[
     (110,6,1,20)]
 
 """
+## 建模开始
+mymodel=mdb.Model(name="Model-2")
+
 ## 输入参数
+
 #### From : Delamination in asymmetrically tapered composites loaded in tension
 #laminate_l,laminate_w=240,12.5 # 240,25
 #Plies=[
@@ -35,19 +39,58 @@ Drops=[
 #    (0,0.125),(0,0.125),(0,0.125),(0,0.125),(45,0.125),(45,0.125),(-45,0.125),(-45,0.125),]
 #Drops=[(120,9,8,2.5)] # 
 
-laminate_l,laminate_w=40,8 # 240,25
-Plies=[(45,1),(-45,1)]
-Drops=[] # []代表无递减层 也就是普通等厚度层合板
+#laminate_l,laminate_w=40,8 # 240,25
+#Plies=[(45,1),(-45,1)]
+#Drops=[] # []代表无递减层 也就是普通等厚度层合板
 
-## 建模开始
-mymodel=mdb.Model(name="Model-1")
+### From : Delamination in asymmetrically tapered composites loaded in tension
+laminate_l,laminate_w=240,12.5 # 240,25
+Plies=[
+    (-45,0.125,"Composite"),(-45,0.125,"Composite"),(45,0.125,"Composite"),
+    (45,0.125,"Composite"),(0,0.125,"Composite"),(0,0.125,"Composite"),
+    (0,0.125,"Composite"),(0,0.125,"Composite"),(0,0.125,"Composite"),
+    (0,0.125,"Composite"),(0,0.125,"Composite"),(0,0.125,"Composite"),
+    (45,0.125,"Composite"),(45,0.125,"Composite"),(-45,0.125,"Composite"),
+    (-45,0.125,"Composite"),(-45,0.125,"Composite"),(-45,0.125,"Composite"),
+    (45,0.125,"Composite"),(45,0.125,"Composite"),(0,0.125,"Composite"),
+    (0,0.125,"Composite"),(0,0.125,"Composite"),(0,0.125,"Composite"),
+    (0,0.125,"Composite"),(0,0.125,"Composite"),(0,0.125,"Composite"),
+    (0,0.125,"Composite"),(45,0.125,"Composite"),(45,0.125,"Composite"),
+    (-45,0.125,"Composite"),(-45,0.125,"Composite"),]
+Drops=[(120,9,8,2.5)] # 
+
+## From : Strain-Energy-Release Rate Analysis of Delamination in a Tapered Laminate Subjected to Tension Load
+h=0.125
+laminate_l,laminate_w=180*h,20*h # 240,25
+Plies=[
+    (0,0.875,"Composite"),
+    (45,0.125,"Composite"),(-45,0.125,"Composite"),
+    (0,0.01,"Resin"),
+    (45,0.125,"Composite"),(-45,0.125,"Composite"),
+    (45,0.125,"Composite"),(-45,0.125,"Composite"),
+    (45,0.125,"Composite"),(-45,0.125,"Composite"),
+    (0,0.01,"Resin"),
+    (0,0.125,"Composite"),
+    (45,0.125,"Composite"),(-45,0.125,"Composite"),
+    (0,0.125,"Composite"),]
+Drops=[(60*h,5,2,20*h),
+        (80*h,7,2,20*h),
+        (100*h,9,2,20*h),] # X起始坐标,第i层开始,中断层数,过渡区长度
+
+
+mymodel.Material(name='Composite',description="S2/SP250 GlasdEpoxy").Elastic(
+    type=ENGINEERING_CONSTANTS, table=((7.3, 2.1, 2.1, 0.275, 
+    0.275, 0.275, 0.88, 0.88, 0.88), ))
+mymodel.Material(name='Resin').Elastic(table=((0.59, 0.33), ))
+mymodel.HomogeneousSolidSection(name='Resin_Pocket', material='RESIN', thickness=None)
+
 
 ###  create part_1
 part1=mymodel.Part(name='Part-1',dimensionality=THREE_D,type=DEFORMABLE_BODY)
 
 sketch1=mymodel.ConstrainedSketch(name='Sketch-1',sheetSize=200.0)
 point1=(0,0)
-thick_h=sum([h for _,h in Plies])
+thick_h=sum([h for _,h,_ in Plies])
 point2=(0,thick_h)
 sketch1.Line(point1=point1,point2=point2)
 for drop in Drops:
@@ -140,63 +183,10 @@ for point in drop_points:
     except:
         pass
 
-
-# UGENS_PROPS=(0.,1.,1.,6.,0.,0.,6.,7.,-1.,1.,0.,0.,0.,0.,0.,0.,0.3,0.3,276000.,0.2,19000.,0.36,27000.,4850.,3000.,0.,0.,0.,0.46,121.,210.,0.,0.,0.,42.7,53.7,76.5,101.5,111.3,125.,4105.8,2500.,2000.,1396.6,803.3,410.2,45.6,88.,128.4,153.2,173.7,193.4,4108.1,2395.5,1603.2,1097.3,699.7,310.2,0.575,-0.5,0.5,1.,0.,15.,100.,100.,100.,121.,210.,121.,210.,76.,12.,12.,12.,12.,12.,0.01,64.,5.083,1.447,)
-# UMAT_PROPS=(4100.,  4100.,  4100.,   0.46,   0.46,   0.46,  1400.,  1400.,  1400.,   121.,   210.,    76.,276000., 19000., 19000.,    0.2,    0.2,   0.36, 27000., 27000.,  6980.,  4850.,  3000.,  0.575,    0.3,    0.3,     6.,   42.7,   53.7,   76.5,  101.5,  111.3,   125.,  4100.,  2500.,  2000.,  1400.,   800.,   410.,     1.,     2.,     3.,     4.,     5.,     6.,     7.,     8.,     9.,    10.,    11.,    12.,     0.,  2.322,  5.083,  1.656,  1.447,   1.87,   54.4,   0.01）
-UMAT_NAME='IM7-8552'
-UMAT_PROPS = (#基体的九个弹性常数加上三个拉压剪模量 E11,E22,E33,V12,V13,V23,G12,G13,G23
-            4100., 4100., 4100., 0.46, 0.46,   0.46,  1400.,  1400., 1400.,121.,210.,76.,
-            #纤维的九个弹性常数加上两个拉压模量 E11,E22,E33,V12,V13,V23,G12,G13,G23
-            276000.,19000., 19000., 0.2, 0.2, 0.36, 27000.,27000., 6980., 4850., 3000.,
-            # VF ALPHA BETA
-            0.575,  0.3,    0.3,
-            #MSEG
-            6., 
-            #ETM 基体塑性阶段折线强度和模量
-            42.7,   53.7,   76.5,  101.5,  111.3,   125.,  
-            4100.,  2500.,  2000.,  1400.,   800.,   410.,   
-            #STATEV(13): SSF(6) SSM(6) 衰减次数
-            0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,        
-            #KT22  KTT22 KC22 K12 K23 KT22BI KC22BI
-            2.34,5.083,1.656,1.447,1.87,1.72,1.69,            
-            #2.322,  5.083,  1.656,  1.447,1.87,   
-            #LMISE RF INDFAIL
-            54.4,   0.01,  1
-            )
-UMAT_NAME='T300-914C'
-UMAT_PROPS = (#基体的九个弹性常数加上三个拉压剪模量 E11,E22,E33,V12,V13,V23,G12,G13,G23
-            4000.0, 4000.0, 4000.0, 0.35, 0.35, 0.35, 1481.0, 1481.0, 1481.0, 75.0,150.0, 70.0,
-            #纤维的九个弹性常数加上两个拉压模量 E11,E22,E33,V12,V13,V23,G12,G13,G23
-            230000.0, 15000.0, 15000.0, 0.2, 0.2, 0.07, 15000.0, 15000.0,7447.0, 2500.0, 2000.0,
-            # VF ALPHA BETA
-            0.6, 0.3, 0.3, 
-            #MSEG
-            6.0, 
-            #ETM 基体塑性阶段折线强度和模量
-            110.0, 120.0, 130.0, 140.0,150.0, 160.0, 
-            4000.0, 4000.0, 4000.0, 4000.0, 4000.0, 4000.0,
-            #STATEV(13): SSF(6) SSM(6) 衰减次数
-            0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,        
-            #KT22  KTT22 KC22 K12 K23 KT22BI KC22BI
-            2.14, 5.07, 1.57,1.43, 1.73,1.75943,1.60124,
-            #LMISE RF INDFAIL
-            60,   0.01,  1
-            )
-usrmat=mymodel.Material(name=UMAT_NAME, description='UMAT')
-usrmat.UserMaterial(mechanicalConstants=UMAT_PROPS)
-# 设置nstav值
-usrmat.Depvar(n=14)
-
-#mymodel.Material(name='IM7-8552').Elastic(
-#    type=ENGINEERING_CONSTANTS, table=((76599.5, 76599.5, 9701.0, 0.0302, 
-#    0.3222, 0.3222, 4820.0, 4100.0, 4100.0), ))
-mymodel.Material(name='RESIN').Elastic(table=((4000.0, 0.35), ))
-mymodel.HomogeneousSolidSection(name='Resin_Pocket', material='RESIN', thickness=None)
-
 datum={}
 points.append([laminate_l/2.0,0,len(Plies)-1])
 for i,point in enumerate(points):
-    angle,ply_h=Plies[point[2]]
+    angle,ply_h,prop=Plies[point[2]]
     angle=int(angle)
     es=part1.edges.findAt(coordinates=(point[0],point[1],0))
     n1,n2=es.getVertices()
@@ -224,7 +214,7 @@ for i,point in enumerate(points):
         additionalRotationType=ROTATION_NONE, angle=0.0, 
         additionalRotationField='', axis=AXIS_3, stackDirection=STACK_3)
     layup.CompositePly(suppressed=False, plyName='Ply-%d'%i, region=r, 
-        material=UMAT_NAME, thicknessType=SPECIFY_THICKNESS, thickness=1.0, 
+        material=prop, thicknessType=SPECIFY_THICKNESS, thickness=1.0, 
         orientationType=SPECIFY_ORIENT, orientationValue=angle, 
         additionalRotationType=ROTATION_NONE, additionalRotationField='', 
         axis=AXIS_3, angle=0.0, numIntPoints=1)
@@ -244,9 +234,15 @@ for i,corner in enumerate(pocket_corner):
 
 for drop in Drops:
     dt=part1.DatumPlaneByPrincipalPlane(principalPlane=YZPLANE, offset=drop[0])
-    part1.PartitionCellByDatumPlane(datumPlane=part1.datums[dt.id], cells=part1.cells)
+    try:
+        part1.PartitionCellByDatumPlane(datumPlane=part1.datums[dt.id], cells=part1.cells)
+    except Exception as e:
+        print e
     dt=part1.DatumPlaneByPrincipalPlane(principalPlane=YZPLANE, offset=drop[0]+drop[3])
-    part1.PartitionCellByDatumPlane(datumPlane=part1.datums[dt.id], cells=part1.cells)
+    try:
+        part1.PartitionCellByDatumPlane(datumPlane=part1.datums[dt.id], cells=part1.cells)
+    except Exception as e:
+        print e
 
 # Assembly
 rootasm=mymodel.rootAssembly
@@ -254,7 +250,7 @@ rootasm.DatumCsysByDefault(CARTESIAN)
 inst1=rootasm.Instance(dependent=ON, name='Part-1-1', part=part1)
 
 # Step
-mymodel.StaticStep(name='Step-1', previous='Initial',timeIncrementationMethod=FIXED, initialInc=0.01)
+mymodel.StaticStep(name='Step-1', previous='Initial',timeIncrementationMethod=AUTOMATIC, initialInc=1.0)
 mymodel.fieldOutputRequests['F-Output-1'].setValues(variables=(
     'S', 'PE', 'PEEQ', 'PEMAG', 'LE', 'U', 'RF', 'CF', 'NFORC', 'CSTRESS', 
     'CDISP','EVOL','SDV'))

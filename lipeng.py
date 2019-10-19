@@ -5,6 +5,7 @@ import visualization
 from abaqus import *
 from abaqusConstants import *
 import numpy as np
+import textwrap
 
 ACISEPS=1e-6
 
@@ -45,6 +46,15 @@ def edge2vector(ns,e):
 	n2=ns[e.getVertices()[1]].pointOn[0]
 	return [n1[i]-n2[i] for i in xrange(3)]
 
+def elementBound(elm):
+  ns=elm.getNodes()
+  xmin=min((n.coordinates[0] for n in ns))
+  xmax=max((n.coordinates[0] for n in ns))
+  ymin=min((n.coordinates[1] for n in ns))
+  ymax=max((n.coordinates[1] for n in ns))
+  zmin=min((n.coordinates[2] for n in ns))
+  zmax=max((n.coordinates[2] for n in ns))
+  return ((xmin,ymin,zmin),(xmax,ymax,zmax))
 
 def prettyDir(obj):
   """
@@ -129,7 +139,7 @@ def generateEdgePath(model1,coord=None,pthname=None):
 
   return session.paths[name]
 
-def extractDataFromPath(odb,pth,variables,suffix="",csyname=None):
+def extractDataFromPath(odb,pth,variables,prefix="",suffix="",csyname=None):
   """
   在当前session中提取pth所对应的所有应力数据，并保存在XYData中名字后缀suffix
   lipeng.extractDataFromPath("Job-X1.odb",lipeng.generate_path(m1,coord={"x":20,"z":0.5}),suffix="X1")  
@@ -146,14 +156,16 @@ def extractDataFromPath(odb,pth,variables,suffix="",csyname=None):
   else:
     o = odb
   session.viewports['Viewport: 1'].setValues(displayedObject=o)
-  if not (csyname is None):
-    scratchOdb = session.ScratchOdb(o)
-    scratchOdb.rootAssembly.DatumCsysByThreePoints(name='CSYS-1', 
+  scratchOdb = session.ScratchOdb(o)
+  if csyname is None:
+    csyname='CSYS-1'
+    scratchOdb.rootAssembly.DatumCsysByThreePoints(name=csyname, 
         coordSysType=CARTESIAN, origin=(0.0, 0.0, 0.0), point1=(1.0, 0.0, 0.0), 
         point2=(0.0, 1.0, 0.0))
-    dtm = scratchOdb.rootAssembly.datumCsyses['CSYS-1']
-    session.viewports['Viewport: 1'].odbDisplay.basicOptions.setValues(
-        transformationType=visualization.USER_SPECIFIED, datumCsys=dtm)
+  dtm = scratchOdb.rootAssembly.datumCsyses[csyname]
+  session.viewports['Viewport: 1'].odbDisplay.basicOptions.setValues(
+      transformationType=visualization.USER_SPECIFIED, datumCsys=dtm)
+
   for var in variables:
     var=var.upper()
     try:
@@ -164,8 +176,10 @@ def extractDataFromPath(odb,pth,variables,suffix="",csyname=None):
       else:
         displayDict["variableLabel"]=var
       displayDict["outputPosition"]=INTEGRATION_POINT if var[0] in ('E','S','H') else NODAL
+      if var.startswith('NFORC'):
+        displayDict["outputPosition"]=ELEMENT_NODAL
       session.viewports['Viewport: 1'].odbDisplay.setPrimaryVariable(**displayDict)
-      session.XYDataFromPath(name=var+suffix, path=pth, 
+      session.XYDataFromPath(name=prefix+var+suffix, path=pth, 
         includeIntersections=False, projectOntoMesh=False, pathStyle=PATH_POINTS, 
         numIntervals=10, projectionTolerance=0, shape=UNDEFORMED, 
         labelType=TRUE_DISTANCE)
@@ -185,15 +199,33 @@ def extractDataFromPath(odb,pth,variables,suffix="",csyname=None):
   #  except Exception as e:
   #    print("extract %s error: %s"%(sigma,e))  
 
-def elementBound(elm):
-  ns=elm.getNodes()
-  xmin=min((n.coordinates[0] for n in ns))
-  xmax=max((n.coordinates[0] for n in ns))
-  ymin=min((n.coordinates[1] for n in ns))
-  ymax=max((n.coordinates[1] for n in ns))
-  zmin=min((n.coordinates[2] for n in ns))
-  zmax=max((n.coordinates[2] for n in ns))
-  return ((xmin,ymin,zmin),(xmax,ymax,zmax))
+def calMean(jobname,setname=None):
+  """
+  提取odb中setname最后一帧的应力的平均值
+  如果不设置setname 或者
+  本程序将只含有一个积分点的单元在积分点积分点的应力作为单元的平均应力
+  然后按初始体积计算集合所有单元的应力平均值
+  
+  calMean("Job-1","FIBER") 
+  calMean("Job-1","MATRIX")
+  """
+  getdata=lambda v:v.data
+  odb=openOdb(jobname+".odb")
+  laststep=odb.steps[odb.steps.keys()[-1]]
+  lastframe=laststep.frames[-1]
+  rasm=odb.rootAssembly
+  inst=rasm.instances[rasm.instances.keys()[0]]
+  if setname:
+    if setname not in inst.elementSets:
+      raise Exception,'no set %s in %s, please Check !'%(setname,inst.name)
+    sigma=np.array(map(getdata,lastframe.fieldOutputs['S'].getSubset(region=inst.elementSets[setname]).values))
+    evol=np.array(map(getdata,lastframe.fieldOutputs['EVOL'].getSubset(region=inst.elementSets[setname]).values))
+  else:
+    setname="ALL"
+    sigma=np.array(map(getdata,lastframe.fieldOutputs['S'].values))
+    evol=np.array(map(getdata,lastframe.fieldOutputs['EVOL'].values))
+  closeOdb(odb)
+  print '%s Mean:\n'%(setname),np.dot(evol,sigma)/np.sum(evol)
 
 def stressTrans(ls):
   """
@@ -212,6 +244,7 @@ def stressTrans(ls):
       if i2==j2:
         st[i,j]=st[i,j]/2
   return st
+
 def strainTrans(ls):
   """
     从新系应变分量转换到旧系应变分量
@@ -233,9 +266,10 @@ def strainTrans(ls):
 
 def Pipes_Pagano(m1,l):
   """
+  只适用于角铺层
   m1=mdb.models["Model-XZSYMM--Eq"]
-  # 注意 要做之前把所有之前的Set和Equation 删除
-  # 另外 这个函数的CAE操作很费时 建议直接使用下面的Pipe_Pagano_INP函数的返回结果修改
+  # 注意 要做之前把所有之前的Set和Equation 删除 不然会更加费时
+  # 这个函数执行CAE操作会很费时 建议直接使用下面的Pipe_Pagano_INP函数的返回结果修改inp文件
   """
   rootasm=m1.rootAssembly
   rootasm.regenerate()
@@ -253,16 +287,28 @@ def Pipes_Pagano(m1,l):
     m1.Equation(name='pp-%d-%d-3'%(n0.label,n1.label), terms=((1.0, s1name, 3), (-1.0, s2name, 3)))  
 
 ACISEPS=1e-6
-def Pipes_Pagano_INP(m1):
+def Pipes_Pagano_INP(m1,instanceName='Part-1-1',notInclude=set(),byNode=False,refName='x-ref'):
   """
-  返回两个字符串变量: SetINP,和EquationINP
-  SetINP: 是每个节点都建立一个Set的inp语句 在inp文件中建议插入在Assembly节中End Instance后
-  EquationINP： 是每个节点建立Equation的inp语句 在inp文件中建议插入在End Assembly之前
+  只适用于角铺层
+  对层合板的每一层建立Pipes Pagano模型的位移约束
+  必要条件:
+    1. 层厚度为z方向
+  输入
+    m1: model 对象
+    instanceName: 层合板所在的instance 的名称
+    notInclude: 不建立Equation的节点label,因为Equation约束的第一个节点位移不能再有其它约束(边界条件也不能有)
+    byNode : Bool 对象，如果为True，每个Node 建立一个Set, 如果为False,将Equation的所有节点建立在Set内
+    refName : 参考点集合名称
+  返回
+    SetINP: 字符串，每个节点都建立一个Set的inp语句 建议插入在inp文件中Assembly节中End Instance后
+    EquationINP： 字符串，是每个节点建立Equation的inp语句 建议插入在inp文件中End Assembly之前
   """
   rasm=m1.rootAssembly
-  part11=rasm.instances["Part-1-1"]
-  lam_len,lam_width,lam_height=part11.cells.getBoundingBox()["high"][0]
+  part11=rasm.instances[instanceName]
+
+  lam_len,lam_width,lam_height=part11.cells.getBoundingBox()["high"]
   
+  tol=max(lam_len,lam_width,lam_height)*ACISEPS*10
   plyZs=set()
   for i in xrange(len(part11.cells)):
     bb=part11.cells[i:i+1].getBoundingBox()
@@ -270,21 +316,283 @@ def Pipes_Pagano_INP(m1):
     plyZs.add(bb["low"][2])
   plyZs=sorted(list(plyZs),reverse=True)
   plynum=len(plyZs)-1
-  SetINP=""
-  EquationINP=""
   EquationNodeSet=set({})
+  EquationPair=[]
+  formatStr=textwrap.dedent("""\
+  3
+  Node-{0:d}, 1, 1.,Node-{1:d}, 1, -1.,x-ref, 1, 1.
+  2
+  Node-{0:d}, 2, 1.,Node-{1:d}, 2, -1.
+  2
+  Node-{0:d}, 3, 1.,Node-{1:d}, 3, -1.
+  """)
   for i in xrange(plynum):
     zmin,zmax=plyZs[i+1],plyZs[i]
-    ply=rasm.Set(name="PP_Ply%d"%i,cells=part11.cells.getByBoundingBox(zMin=zmin-ACISEPS,zMax=zmax+ACISEPS))
+    rasm.Set(name="PP_Ply%d"%i,cells=part11.cells.getByBoundingBox(zMin=zmin-tol,zMax=zmax+tol))
+    ply=rasm.sets["PP_Ply%d"%i]
     ns=ply.nodes
-    x1ns=ns.getByBoundingBox(xMin=lam_len-ACISEPS)
-    for n0 in ns.getByBoundingBox(xMax=ACISEPS):
-      if n0.label in EquationNodeSet:
+    x1ns=ns.getByBoundingBox(xMin=lam_len-tol)
+    for n0 in ns.getByBoundingBox(xMax=tol):
+      if n0.label in EquationNodeSet or n0.label in notInclude:
         continue
+      EquationNodeSet.add(n0.label)
       xyz=n0.coordinates
-      n1=x1ns.getByBoundingBox(yMin=xyz[1]-ACISEPS,yMax=xyz[1]+ACISEPS,zMin=xyz[2]-ACISEPS,zMax=xyz[2]+ACISEPS,)[0]
-      SetINP=SetINP+"*Nset, nset=Node-{0:d}, instance=Part-1-1\n{0:d},\n*Nset, nset=Node-{1:d}, instance=Part-1-1\n{1:d},\n".format(n0.label,n1.label)
-      EquationINP=EquationINP+"*Equation\n3\nNode-{0:d}, 1, 1.\nNode-{1:d}, 1, -1.\nx-ref, 1, 1.\n*Equation\n2\nNode-{0:d}, 2, 1.\nNode-{1:d}, 2, -1.\n*Equation\n2\nNode-{0:d}, 3, 1.\nNode-{1:d}, 3, -1.\n".format(n0.label,n1.label)
-      #EquationINP=EquationINP+"*Equation\n3\n{0:d}, 1, 1.\n{1:d}, 1, -1.\nx-ref, 1, 1.\n*Equation\n2\n{0:d}, 2, 1.\n{1:d}, 2, -1.\n*Equation\n2\n{0:d}, 3, 1.\n{1:d}, 3, -1.\n".format(n0.label,n1.label)
-      EquationNodeSet.add(n0.label)  
+      n1=x1ns.getByBoundingBox(yMin=xyz[1]-tol,yMax=xyz[1]+tol,zMin=xyz[2]-tol,zMax=xyz[2]+tol,)[0]
+      EquationNodeSet.add(n1.label)
+      EquationPair.append((n0.label,n1.label))
+
+  if byNode:
+    SetINP=""
+    EquationINP=""
+    for label in  EquationNodeSet:
+      SetINP=SetINP+"*Nset, nset=Node-{0:d}, instance={1:s}\n{0:d},\n".format(label,instanceName)  
+
+    EquationINP+="*Equation\n"
+    for pair in EquationPair:
+      EquationINP+="3\nNode-%d, 1, 1.,Node-%d, 1, -1.,%s, 1, 1.\n"%(pair[0],pair[1],refName)
+  else:
+    N=15 # Nset的行数据最多为16
+    SetINP="*Nset, nset=Pipes_Pagano_Set-0, instance=%s,UNSORTED\n"%instanceName
+    for i in range(len(EquationPair)/N+1):
+      SetINP=SetINP+",".join((str(x[0]) for x in EquationPair[N*i:min(len(EquationPair),N*i+N)]))+'\n'
+    
+    SetINP=SetINP+"*Nset, nset=Pipes_Pagano_Set-1, instance=%s,UNSORTED\n"%instanceName
+    for i in range(len(EquationPair)/N+1):
+      SetINP=SetINP+",".join((str(x[1]) for x in EquationPair[N*i:min(len(EquationPair),N*i+N)]))+'\n'
+    
+    EquationINP=textwrap.dedent("""\
+    *Equation
+    2
+    Pipes_Pagano_Set-0, 2, 1.,Pipes_Pagano_Set-1, 2, -1.
+    2
+    Pipes_Pagano_Set-0, 3, 1.,Pipes_Pagano_Set-1, 3, -1.
+    3
+    Pipes_Pagano_Set-0, 1, 1.,Pipes_Pagano_Set-1, 1, -1., %s, 1, 1.
+    """%refName)
   return SetINP,EquationINP
+
+def PBC(m1,byNode=False):
+  """
+  输入:
+    m1: abaqus Model 对象
+    byNode: 是否按节点建立Equation (默认为按Set建立), 注意 按节点建立Equation需要很多个只包含一个节点的集合 所以会导致文件很大
+  返回:
+    SetInp: 用于生成Set 的inp文件字符串
+    EquationInp: 用于生成 Equation 的inp文件字符串
+        目前未对8个顶点进行处理,只对内部节点和边界的内部节点建立了Equation 
+        互相平行的四条边 每个方向根据周期性边界条件建立了3个Equation,如果建立4个Abaqus会报错
+
+    建议在inp文件的*End Assembly 行前插入 SetInp 和EquationINp
+  描述:
+    创建周期性边界条件
+    想更加深入了解RVE的PBC怎么设置 可以参考
+    Development of an ABAQUS plugin tool for periodic RVE homogenisation
+    Omairey S L, Dunning P D, Sriramula S. Development of an ABAQUS plugin tool for periodic RVE homogenisation[J]. Engineering with Computers, 2019, 35(2): 567-577.
+    将节点分为三类:
+      1. 角点 innerNodes
+      2. 面内部节点 edges
+      2. 边内部点 corners: 是文章中的顺序 (0,0,0) (1,0,0) (1,0,1) (0,0,1)  (0,1,0) (1,1,0) (1,1,1) (0,1,1)  
+
+  问题：
+     这个程序建立Equation没有问题，但是求解出来的结果会在位移边界上出现抖动，不连续，目前还不清楚原因
+  ```
+  m1=mdb.models["Model-1"]
+  #SetINP,EquationINP,EquationPair,EquationPairDict=PeriodicBC(m1)
+  SetINP,EquationINP=PBC(m1,byNode=False)
+  with open("E:/PBC_EquationInp.txt","w") as fp:
+    fp.write(SetINP)
+    fp.write(EquationINP)
+  SetINP,EquationINP=PBC(m1,byNode=True)
+  with open("E:/PBC_Node_EquationInp.txt","w") as fp:
+    fp.write(SetINP)
+    fp.write(EquationINP)  
+  ```
+  """
+  rasm=m1.rootAssembly
+  instanceName=rasm.instances.keys()[0]
+  part11=rasm.instances[instanceName]
+
+  x_high,y_high,z_high=part11.cells.getBoundingBox()["high"]
+  x_low,y_low,z_low=part11.cells.getBoundingBox()["low"]
+
+  tol=ACISEPS*max(*(x1-x0 for x1,x0 in zip(part11.cells.getBoundingBox()["high"],part11.cells.getBoundingBox()["low"])))
+
+  ns=part11.nodes
+  x0ns=ns.getByBoundingBox(xMax=x_low+tol)
+  y0ns=ns.getByBoundingBox(yMax=y_low+tol)
+  z0ns=ns.getByBoundingBox(zMax=z_low+tol)
+  x1ns=ns.getByBoundingBox(xMin=x_high-tol)
+  y1ns=ns.getByBoundingBox(yMin=y_high-tol)
+  z1ns=ns.getByBoundingBox(zMin=z_high-tol)
+
+  faces=[x0ns,y0ns,z0ns,x1ns,y1ns,z1ns]
+  #abbr=['Back','Right','Bottom','Front','Left','Top']
+  abbr=["X0","Y0","Z0","X1","Y1","Z1"]
+  edges={}
+  for i in range(6):
+    for j in range(6):
+      if j!=i and abs(j-i)!=3:
+        edges['%s-%s'%(abbr[i],abbr[j])]=set(n.label for n in faces[i]) & set(n.label for n in faces[j])
+
+  corners=[0 for i in range(8)]
+  corners[0]=(edges["X0-Y0"] & edges["X0-Z0"]).pop()
+  corners[1]=(edges["X1-Y0"] & edges["X1-Z0"]).pop()
+  corners[2]=(edges["X1-Y0"] & edges["X1-Z1"]).pop()
+  corners[3]=(edges["X0-Y0"] & edges["X0-Z1"]).pop()
+  corners[4]=(edges["X0-Y1"] & edges["X0-Z0"]).pop()
+  corners[5]=(edges["X1-Y1"] & edges["X1-Z0"]).pop()
+  corners[6]=(edges["X1-Y1"] & edges["X1-Z1"]).pop()
+  corners[7]=(edges["X0-Y1"] & edges["X0-Z1"]).pop()
+
+  innerNodes={}
+  for i in range(6):
+    innerNodes["Inner-%s"%abbr[i]]=set(n.label for n in faces[i]).difference(*edges.values())
+  for k in edges.keys():
+    edges[k].difference_update(corners)
+
+  EquationPair={direction:{} for direction in 'XYZ'} # 按方向
+  for ind,direction in enumerate('XYZ'):
+    ns0,ns1=faces[ind],faces[ind+3]
+    try:
+      for n0 in ns0:
+        bounding={}
+        xyz=n0.coordinates
+        for i in range(3) :
+          if i==ind:
+            continue
+          bounding["%sMin"%'xyz'[i]]=xyz[i]-tol
+          bounding["%sMax"%'xyz'[i]]=xyz[i]+tol
+        n1=ns1.getByBoundingBox(**bounding)[0]
+        EquationPair[direction][n0.label]=n1.label
+        EquationPair[direction][n1.label]=n0.label
+    except Exception as e:
+      print 'Error in find:',bounding
+      raise Exception
+  
+  with open('E:/PBC_Node_Verify.txt','w') as fp:
+    for ind,direction in enumerate('XYZ'):
+      fp.write(direction)
+      for k,v in EquationPair[direction].items():
+        c1,c2=ns[k-1].coordinates,ns[v-1].coordinates
+        fp.write('%d ->  %d : %f %s -> %s\n'%(k,v,sum([abs(c1[i]-c2[i]) for i in range(3) if i!=ind]),repr(c1),repr(c2)))
+  
+  for ind,direction in enumerate('XYZ'):
+    innerNodes["Inner-%s0"%direction]=list(innerNodes["Inner-%s0"%direction])
+    innerNodes["Inner-%s1"%direction]=[EquationPair[direction][n] for n in innerNodes["Inner-%s0"%direction]]
+    d1,d2='XYZ'[(ind+1)%3],'XYZ'[(ind+2)%3]
+    edges['%s0-%s0'%(d1,d2)]=list(edges['%s0-%s0'%(d1,d2)])
+    edges['%s1-%s0'%(d1,d2)]=[EquationPair[d1][n] for n in edges['%s0-%s0'%(d1,d2)]]
+    edges['%s0-%s1'%(d1,d2)]=[EquationPair[d2][n] for n in edges['%s0-%s0'%(d1,d2)]]
+    edges['%s1-%s1'%(d1,d2)]=[EquationPair[d1][n] for n in edges['%s0-%s1'%(d1,d2)]]
+    
+    edges['%s0-%s0'%(d2,d1)]=edges['%s0-%s0'%(d1,d2)]
+    edges['%s1-%s0'%(d2,d1)]=edges['%s1-%s0'%(d1,d2)]
+    edges['%s0-%s1'%(d2,d1)]=edges['%s0-%s1'%(d1,d2)]
+    edges['%s1-%s1'%(d2,d1)]=edges['%s1-%s1'%(d1,d2)]
+  
+  SetINP=""
+  EquationINP="*Equation\n"
+  dataline=textwrap.dedent("""\
+  3
+  {0:s},1, {1:g},{2:s},1, {3:g}.,{4:s},1, {5:g}
+  3
+  {0:s},2, {1:g},{2:s},2, {3:g}.,{4:s},2, {5:g}
+  3
+  {0:s},3, {1:g},{2:s},3, {3:g}.,{4:s},3, {5:g}
+  """)
+  RPDict={'X':'RP4','Y':'RP5','Z':'RP6'}
+  if byNode:
+    for n in set([n.label for f in faces for n in f ]):
+      SetINP+="*Nset,nset=Node-%d,instance=%s\n%d\n"%(n,instanceName,n)
+
+    for ind,direction in enumerate('XYZ'):
+      f0,f1=innerNodes["Inner-%s0"%direction],innerNodes["Inner-%s1"%direction]
+      for i in xrange(len(f0)):
+        EquationINP+=dataline.format("Node-%d"%f0[i],1.0,"Node-%d"%f1[i],-1.0,RPDict[direction],1.0)
+      d1,d2='XYZ'[(ind+1)%3],'XYZ'[(ind+2)%3]
+      # Y0Z0 Y1Z0 Y0Z1 Y1Z1
+      e1,e2,e3,e4=[edges["%s%d-%s%d"%(d1,i,d2,j)] for j in range(2) for i in range(2) ]
+      for i in xrange(len(e1)):
+        EquationINP+=dataline.format("Node-%d"%e1[i],1.0,"Node-%d"%e2[i],-1.0,RPDict[d1],1.0)
+        EquationINP+=dataline.format("Node-%d"%e2[i],1.0,"Node-%d"%e4[i],-1.0,RPDict[d2],1.0)
+        EquationINP+=dataline.format("Node-%d"%e4[i],-1.0,"Node-%d"%e3[i],1.0,RPDict[d1],1.0)
+        # 方程重复了 不删除会报错,nodes are missing degree of freedoms. The MPC/Equation/kinematic coupling constraints can not be formed.
+        #EquationINP+=dataline.format("Node-%d"%e3[i],-1.0,"Node-%d"%e1[i],1.0,RPDict[d1],1.0)  
+  else:
+    # create Equation By Set  
+    N=15 # Nset的行数据最多为16
+    for k,v in innerNodes.items():
+      SetINP=SetINP+"*Nset, nset=%s, instance=%s,UNSORTED\n"%(k,instanceName)
+      for i in range(len(v)/N+1):
+        SetINP=SetINP+",".join((str(x) for x in v[N*i:min(len(v),N*i+N)]))+'\n'
+
+    for k,v in edges.items():
+      SetINP=SetINP+"*Nset, nset=%s, instance=%s,UNSORTED\n"%(k,instanceName)
+      for i in range(len(v)/N+1):
+        SetINP=SetINP+",".join((str(x) for x in v[N*i:min(len(v),N*i+N)]))+'\n'
+
+    for k in range(8):
+      SetINP=SetINP+"*Nset, nset=C%d, instance=%s,UNSORTED\n%d\n"%(k+1,instanceName,corners[k])
+
+    for ind,direction in enumerate('XYZ'):
+      EquationINP+=dataline.format("Inner-%s0"%direction,1.0,"Inner-%s1"%direction,-1.0,RPDict[direction],1.0)
+      d1,d2='XYZ'[(ind+1)%3],'XYZ'[(ind+2)%3]
+      e1,e2,e3,e4=["%s%d-%s%d"%(d1,i,d2,j) for j in range(2) for i in range(2)]  # (0,0) (1,0) (0,1) (1,1)
+      EquationINP+=dataline.format(e1,1.0,e2,-1.0,RPDict[d1],1.0)
+      EquationINP+=dataline.format(e2,1.0,e4,-1.0,RPDict[d2],1.0)
+      EquationINP+=dataline.format(e4,-1.0,e3,1.0,RPDict[d1],1.0)
+      # 方程重复了 不删除会报错,nodes are missing degree of freedoms. The MPC/Equation/kinematic coupling constraints can not be formed.
+      #EquationINP+=dataline.format(e3,1.0,e1,-1.0,RPDict[d2],-1.0)
+  return SetINP,EquationINP
+
+def Ortho_Compliance(El,Et,Ez,nutz,nulz,nult,Gtz,Glz,Glt):
+  """
+  各项异性柔度矩阵,传统顺序 11 22 33 23 13 12
+  """
+  lamS=np.array([1/El,-nult/El,-nulz/El,0,0,0,
+                -nult/El,1/Et,-nutz/Et,0,0,0,
+                -nulz/El,-nutz/Et,1/Ez,0,0,0,
+                0,0,0,1/Gtz,0,0,
+                0,0,0,0,1/Glz,0,
+                0,0,0,0,0,1/Glt]).reshape((6,6))
+  return lamS
+
+def Iso_Compliance(E,nu):
+  G=E/(2.0+2.0*nu)
+  return Ortho_Compliance(E,E,E,nu,nu,nu,G,G,G)
+
+def Compliance(props,abaqus=False):
+  """
+  如果abaqus 为True,代表props中的顺序为abaqus的顺序, 11 22 33 12 13 23 12 13 23
+  """
+  if len(props)==2:
+    return Iso_Compliance(props[0],props[1])
+  elif len(props)==9:
+    if abaqus:
+      return Ortho_Compliance(props[0],props[1],props[2],
+                              props[5],props[4],props[3],
+                              props[8],props[7],props[6])
+    else:
+      return Ortho_Compliance(*props)
+
+def Suo(Exx,Eyy,Gxy,nuxy,a,h,B):
+  """
+  DCB的刚度
+  来自: Xu W , Guo Z Z . A simple method for determining the mode I interlaminar fracture toughness of composite without measuring the growing crack length[J]. Engineering Fracture Mechanics, 2018, 191:476-485.
+  注意DCB处于平面应变状态
+  这里的计算结果为平面应力状态的
+  """
+  nuyx=nuxy*Eyy/Exx
+  rho=np.sqrt(Exx*Eyy)/(2.0*Gxy)-np.sqrt(nuxy*nuyx)
+  beta=(0.677+0.146*(rho-1)-0.0178*(rho-1)**2+0.00242*(rho-1)**3)/np.power(Eyy/Exx,1/4)
+  a_h=a/h
+  C=1/(24/(B*Exx)*(a_h**3/3+beta*a_h**2+beta**2*a_h))
+  return rho,beta,C
+
+def linear_fit(x0,y0):
+  """
+  ax+b拟合x0,y0
+  """
+  res0=np.linalg.lstsq(np.vstack([x0,np.ones(len(x0))]).T,y0)
+  a,b=res0[0][0],res0[0][1]
+  return a,b

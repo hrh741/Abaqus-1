@@ -5,3 +5,4 @@ temp/
 *.rpy.*
 abaqus.rpy
 *.pyc
+.ipynb_checkpoints/

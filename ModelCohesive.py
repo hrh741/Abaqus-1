@@ -109,18 +109,18 @@ def modelCohesiveLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacemen
     ## Step (Field Output & History Outpu)    
     model1.StaticStep(name='Step-1', noStop=OFF, previous='Initial', timeIncrementationMethod=AUTOMATIC, initialInc=0.01,maxNumInc=1000,minInc=1e-08, maxInc=0.01,nlgeom=ON)
     
-    model1.fieldOutputRequests['F-Output-1'].setValues(variables=('S', 'E', 'PE', 'PEEQ', 'PEMAG', 'LE', 'U', 'UR', 'RF', 'CF','CSTRESS', 'CDISP', 'SDV', 'STATUS'))
+    model1.fieldOutputRequests['F-Output-1'].setValues(variables=('S', 'E', 'PE', 'PEEQ', 'PEMAG', 'LE', 'U', 'UR', 'RF', 'CF','CSTRESS', 'CDISP', 'SDV', 'STATUS','NFORC'))
     coh_set=rasm.Set(name="Cohesive",cells=myInstance1.cells.findAt([(0,0,plyLowZs[i]+plyThicks[i]/2) for i in range(1,plynum) if plies[i][2]=="Cohesive"]))
     model1.FieldOutputRequest(name='F-Output-Coh',createStepName='Step-1', variables=('SDEG', 'NE'), region=coh_set,sectionPoints=DEFAULT, rebar=EXCLUDE)
     compsite_set=rasm.Set(name="Composite",
         cells=myInstance1.cells.findAt(*[((0,0,plyLowZs[i]+plyThicks[i]/2),) for i in range(0,plynum) if plies[i][2]!="Cohesive"]))
-    model1.FieldOutputRequest(name='F-Output-Composite',createStepName='Step-1', variables=('SDV', 'STH'), region=compsite_set,sectionPoints=DEFAULT, rebar=EXCLUDE)
+    model1.FieldOutputRequest(name='F-Output-Composite',createStepName='Step-1', variables=('S', 'E','U','SDV', 'STH', 'STATUS','NFORC'), region=compsite_set,sectionPoints=DEFAULT, rebar=EXCLUDE)
      
     ## Mesh
     part1.setElementType(regions=composite_region,elemTypes=(mesh.ElemType(elemCode=C3D6, elemLibrary=STANDARD), mesh.ElemType(elemCode=C3D4, elemLibrary=STANDARD),
         mesh.ElemType(elemCode=C3D8R, elemLibrary=STANDARD, secondOrderAccuracy=OFF, kinematicSplit=AVERAGE_STRAIN, hourglassControl=ENHANCED, distortionControl=DEFAULT)))
     part1.setElementType(regions=coh_region,
-        elemTypes=(mesh.ElemType(elemCode=COH3D8, elemLibrary=STANDARD,viscosity=0.0001),
+        elemTypes=(mesh.ElemType(elemCode=COH3D8, elemLibrary=STANDARD,viscosity=0.0001,elemDeletion=ON),
             mesh.ElemType(elemCode=COH3D6, elemLibrary=STANDARD),
             mesh.ElemType(elemCode=UNKNOWN_TET, elemLibrary=STANDARD)))
     part1.assignStackDirection(cells=part1.cells, referenceRegion=part1.faces.getByBoundingBox(zMin=lam_hgt)[0])
@@ -142,60 +142,93 @@ def modelCohesiveLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacemen
         part1.seedEdgeByBias(biasMethod=DOUBLE, constraint=FINER, endEdges=zedges, number=zdiv,ratio=zratio)
     part1.generateMesh()
 
-			   
     ## BC
-    region = rasm.Set(vertices=myInstance1.vertices.findAt(((0,0,0),)), name='Origin')
-    model1.PinnedBC(name='X0Y0Z0-Pin', createStepName='Initial', region=region, localCsys=None)
-
+    Origin = rasm.Set(vertices=myInstance1.vertices.findAt(((0,0,0),)), name='Origin')
     X0=rasm.Set(faces=myInstance1.faces.getByBoundingBox(xMax=0.0), name='X0')
     X1=rasm.Set(faces=myInstance1.faces.getByBoundingBox(xMin=lam_len), name='X1')
     Y0=rasm.Set(faces=myInstance1.faces.getByBoundingBox(yMax=0.0), name='Y0')
     Y1=rasm.Set(faces=myInstance1.faces.getByBoundingBox(yMin=lam_wid), name='Y1')
     Z0=rasm.Set(faces=myInstance1.faces.getByBoundingBox(zMax=0.0), name='Z0')
     Z1=rasm.Set(faces=myInstance1.faces.getByBoundingBox(zMin=lam_hgt), name='Z1')
-
+    model1.rootAssembly.regenerate()
+    
+    notEqNodeLabel=set()
+    model1.PinnedBC(name='X0Y0Z0-Pin', createStepName='Initial', region=Origin, localCsys=None)
+    notEqNodeLabel.update([n.label for n in Origin.nodes])
     if halfStructure[0]==1:
         model1.XsymmBC(name='X=0-XSYMM', createStepName='Initial', region=X0, localCsys=None)    
+        notEqNodeLabel.update([n.label for n in X0.nodes])
+        print(len(notEqNodeLabel))
     else:
-        model1.EncastreBC(name='X=0-ENCAST',createStepName='Initial',region=X0, localCsys=None)
+        pass
+
     if halfStructure[1]==1:
         #model1.YsymmBC(name='Y=0-YSYMM', createStepName='Initial', region=Y0, localCsys=None)
-        model1.DisplacementBC(name='Y=0-LAMINATE_SYMM', createStepName='Initial', 
-            region=Y0, u1=UNSET, u2=SET, u3=UNSET, ur1=SET, ur2=SET, ur3=UNSET, 
-            amplitude=UNSET, distributionType=UNIFORM, fieldName='', localCsys=None)
+        
+        ### 这种有问题，应力在中间有波动
+        #model1.DisplacementBC(name='X1Y0-Symm', 
+        #    createStepName='Step-1', region=X1Y0, u1=0.0, u2=0.0, u3=UNSET, ur1=0.0, 
+        #    ur2=UNSET, ur3=UNSET, amplitude=UNSET, fixed=OFF, distributionType=UNIFORM, 
+        #    fieldName='', localCsys=None)
+        
+        ### 完美
+        model1.DisplacementBC(name='Y0-Symm', 
+            createStepName='Step-1', region=Y0, u1=UNSET, u2=0.0, u3=UNSET, ur1=0.0, 
+            ur2=UNSET, ur3=UNSET, amplitude=UNSET, fixed=OFF, distributionType=UNIFORM, 
+            fieldName='', localCsys=None)
+        model1.DisplacementBC(name='X0Y0-Symm', 
+            createStepName='Step-1', region=X0Y0, u1=0.0, u2=UNSET, u3=UNSET, ur1=UNSET, 
+            ur2=UNSET, ur3=UNSET, amplitude=UNSET, fixed=OFF, distributionType=UNIFORM, 
+            fieldName='', localCsys=None)
+        model1.DisplacementBC(name='X1Y0-Symm', 
+            createStepName='Step-1', region=X1Y0, u1=ex*lam_len, u2=UNSET, u3=UNSET, ur1=UNSET, 
+            ur2=UNSET, ur3=UNSET, amplitude=UNSET, fixed=OFF, distributionType=UNIFORM, 
+            fieldName='', localCsys=None)
+        notEqNodeLabel.update([n.label for n in Y0.nodes])
+        print(len(notEqNodeLabel))
+    
     if halfStructure[2]==1:
-        model1.ZsymmBC(name='Z=0-ZSYMM', createStepName='Initial', region=Z0, localCsys=None)    
-
+        model1.ZsymmBC(name='Z=0-ZSYMM', createStepName='Initial', region=Z0, localCsys=None)
+        #notEqNodeLabel.update([n.label for n in Z0.nodes])
+        ## 不要不要将Z0放入不添加约束的集合里，U1,U2的约束没有的话计算结果会出现错误
+        #print(len(notEqNodeLabel))
     if EquationOrDisplacement==0:
         part2 = model1.Part(name='Part-2', dimensionality=THREE_D,
             type=DEFORMABLE_BODY)
         part2.ReferencePoint(point=(lam_len+1, 0.0, 0.0))
         myInstance2=model1.rootAssembly.Instance(dependent=ON, name='Part-2-1', 
           part=part2)
-        faces=myInstance1.faces.getByBoundingBox(xMin=lam_len-0.01,xMax=lam_len+0.01)
+        faces=myInstance1.faces.getByBoundingBox(xMin=lam_len-ACISEPS,xMax=lam_len+ACISEPS)
         rasm.Set(faces=faces,name='x-load')
         r1 = myInstance2.referencePoints.findAt((lam_len+1.0,0,0))
         refPoints1=(r1,)
         xref=rasm.Set(referencePoints = refPoints1, name='x-ref')
-        model1.Equation(name='Constraint-1', terms=((1.0, 'x-load',
-            1), (-1.0, 'x-ref', 1)))
+        #model1.Equation(name='Constraint-1', terms=((1.0, 'x-load',1), (-1.0, 'x-ref', 1)))
         model1.TabularAmplitude(name='disp-amp', timeSpan=TOTAL,
             smooth=SOLVER_DEFAULT, data=((0.0, 0.0), (1.0, 1.0)))
         model1.DisplacementBC(name='X=1-Tension', createStepName='Step-1',
             region=xref, u1=ex*lam_len, u2=UNSET, u3=UNSET, ur1=UNSET, ur2=UNSET,
             ur3=UNSET, amplitude='disp-amp', fixed=OFF, distributionType=UNIFORM,
             localCsys=None)
-        
         model1.historyOutputRequests['H-Output-1'].setValues(
             frequency=10)
         model1.HistoryOutputRequest(name='H-Output-Ref',
-            createStepName='Step-1', variables=('U1', 'RF1'), region=xref,
+            createStepName='Step-1', variables=('U', 'RF'), region=xref,
             sectionPoints=DEFAULT, rebar=EXCLUDE)
     else:
+        ## 注意不要将边界条件都约束住 U2,U3 否则 会发现中间区域的应力与经典层合板理论不符合
+        #model1.EncastreBC(name='X=0-ENCAST',createStepName='Initial',region=X0, localCsys=None)
+        #model1.DisplacementBC(amplitude=UNSET, createStepName='Step-1', 
+        #    distributionType=UNIFORM, fieldName='', fixed=OFF, localCsys=None, name='X=1-TENSION',
+        #    region=X1, u1=ex*lam_len, u2=UNSET, u3=UNSET, ur1=UNSET, ur2=UNSET, ur3=UNSET)
+
+        model1.DisplacementBC(amplitude=UNSET, createStepName='Step-1', 
+            distributionType=UNIFORM, fieldName='', fixed=OFF, localCsys=None, name='X=0-TENSION',
+            region=X0, u1=0.0, u2=0, u3=0, ur1=UNSET, ur2=UNSET, ur3=UNSET)
         model1.DisplacementBC(amplitude=UNSET, createStepName='Step-1', 
             distributionType=UNIFORM, fieldName='', fixed=OFF, localCsys=None, name='X=1-TENSION',
-            region=X1, u1=ex*lam_len, u2=UNSET, u3=UNSET, ur1=UNSET, ur2=UNSET, ur3=UNSET)
-
+            region=X1, u1=ex*lam_len, u2=0, u3=0, ur1=UNSET, ur2=UNSET, ur3=UNSET)
+    
     ## Job    
     descinfo='%s\r\n %s\r\n %s\r\n'%(str((lam_len,lam_wid,lam_hgt)),",".join(map(str,(xdiv,ydiv))),str(plyAngles))
     suffix="".join(("XYZ"[i] if halfStructure[i]==1 else "" for i in xrange(3)))
@@ -205,28 +238,65 @@ def modelCohesiveLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacemen
     job=mdb.Job(name=jobname,
         description=descinfo,model=model1,numCpus=1,numGPUs=0)
     
-    return model1,job
+    return model1,job,notEqNodeLabel
 
 
 if __name__=="__main__":
     ## 输入参数
-    ls=(0.2,1,1.0) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
-    ws=(40.0,100,10.0)  #  层合板长度(x方向) , 单元数目，以及double seed ratio (center/end)
-    plies=[ (20,    0.175,    "T800-M21", 	10,	8.0),
-            (0,     0.005,   "Cohesive",   	1 ,	8.0),
-            (-20,   0.175,    "T800-M21", 	10,	8.0),
-            (-20,   0.175,    "T800-M21", 	8 ,	8.0),
-            (0,     0.001,   "Cohesive",    1 ,	8.0),
-            (20,    0.175,    "T800-M21", 	8 ,	8.0)] # 从顶部到底部的每层的角度、厚度、材料以及厚度
+    ls=(0.05,1,1.0) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
+    ws=(8.0,400,4.0)  #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
+    plies=[ (45,    0.125,    "T800-M21", 8,	4.0),
+            (0,     0.00625, "Cohesive",    1,	1.0),
+            (-45,   0.125,    "T800-M21", 8,	4.0),
+            (0,     0.00625, "Cohesive",    1,	1.0),
+            (-45,   0.125,    "T800-M21", 8,	4.0),
+            (0,     0.00625, "Cohesive",    1,	1.0),
+            (45,    0.125,    "T800-M21", 8,	4.0)] # 从顶部到底部的每层的角度、厚度、材料以及厚度
     halfStructure=[0,0,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
     # 注意宽度方向上的对称条件不知道为什么一直错误 所以宽度方向尽量不要使用半结构
     EquationOrDisplacement=0 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
+    ex=0.06
+    PBC=(EquationOrDisplacement==0)
+    modelName='ResinLayer45-Cohesive-3'
 
-    ## 默认的model设置
-    modelname='Cohesive-w=4-n=1-h005-ZSYMM'
-    model1=mdb.Model(name=modelname,description='')
+    model1=mdb.Model(name=modelName)
+    model1.setValues(description='Longitude: %s\n Width: %s \n Plies: angle\t thickness \t material \t seedsize In height \n %s'%(repr(ls),repr(ws),repr(plies)))
+    
+    for mat in materials:
+        if mat[1]:
+            material1=model1.Material(name=mat[0])
+            if len(mat[1])==9:
+                material1.Elastic(type=ENGINEERING_CONSTANTS, table=(mat[1], ))
+            elif len(mat[1])==2:
+                material1.Elastic(type=ISOTROPIC, table=(mat[1], ))
 
-    ## Material	   
+    material1=model1.Material(name='UMAT-Composite',description='T300-7901')
+    material1.Depvar(n=15)
+    material1.UserMaterial(mechanicalConstants=
+        (4100.0, 4100.0, 4100.0, 0.46, 0.46, 0.46, 1404.0, 1404.0, 1404.0,  # Matrix Elastic
+        121.0, 210.0, 76.0, # Matrix : tensile compress shear 
+        276000.0, 19000.0, 19000.0, 0.2, 0.2, 0.36, 27000.0, 27000.0, 6985.0, # Fiber Elastic
+        4850.0, 3000.0, # fiber: tensile compress
+        0.575, # Vf
+        0.3, 0.3, # alpha,beta
+        6.0, # MSEG 基体折线段数目 
+        42.7,   53.7,   76.5,   101.5,  111.3,  125,# ETM(1,:)
+        4.1E3,  2.5E3,  2E3,    1.4E3,  0.8E3,  0.41E3, # ETM(2,:)
+        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,
+        2.32225977 ,5.00655592, 1.65594384 , 1.44730762 , 1.86990463 , 1.68355870 ,1.70323652, 54.4, 0.01 ,1 #KT22,KTT22,KC22,K12,K23,KT22BI,KC22BI, 界面的临界脱粘强度, 衰减系数
+    ))
+
+    material1=model1.Material(name='UMAT-Matrix',description='7901')
+    material1.Depvar(n=15)
+    material1.UserMaterial(mechanicalConstants=
+        (4100.0, 0.46, # Matrix Elastic
+        121.0, 210.0, 76.0, # Matrix : tensile compress shear 
+        6.0, # MSEG 基体折线段数目 
+        42.7,   53.7,   76.5,   101.5,  111.3,  125,# ETM(1,:)
+        4.1E3,  2.5E3,  2E3,    1.4E3,  0.8E3,  0.41E3, # ETM(2,:)
+        0.001, # 衰减系数
+        )
+    )
     ## Uguen A, Zubillaga L, Turon A, et al. Comparison of cohesive zone models used to predict delamination initiated from free-edges: validation against experimental results[C]//ECCM-16TH European Conference on Composite Materials. 2014.
     El,Et,Ez=130.0e3,8.0e3,8.0e3
     nult,nulz,nutz=0.31,0.31,0.45
@@ -236,20 +306,45 @@ if __name__=="__main__":
     sigma_zz0,tau_xz0,tau_yz0=46,75,75
     Hillerborg=Et*GIIc/(tau_xz0**2)
     M=0.21
-    le=M*Hillerborg/10																				  
+    le=M*Hillerborg/10
 
-    material1=model1.Material(name='T800-M21',description="2014 Uguen A & Zubillaga L & Turon A")
-    material1.Elastic(type=ENGINEERING_CONSTANTS, table=((El,Et,Ez,nult,nulz,nutz,Glt,Glz,Gtz), ))
     material3=model1.Material(name='Cohesive')     
-    material3.Elastic(type=TRACTION, table=((8000.0, 4000.0, 4000.0), ))
+    material3.Elastic(type=TRACTION, table=((1e9, 1e9, 1e9), ))
     material3.MaxsDamageInitiation(table=((sigma_zz0,tau_xz0,tau_yz0), ))
     material3.maxsDamageInitiation.DamageEvolution(type=ENERGY, mixedModeBehavior=BK, power=2.0,table=((GIc, GIIc, GIIIc), ))
-
-    m,j=modelCohesiveLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=0.04)
-
-    m.setValues(description='Longitude: %s\n Width: %s \n Plies: angle\t thickness \t material \t seedsize In height \n %s'%(repr(ls),repr(ws),repr(plies)))
     
-    from Abaqus import lipeng
-    import time
-    print(time.time());lipeng.Pipes_Pagano(m,ls[0]);print(time.time())
-					  
+    m,j,notEqNodeLabel=modelCohesiveLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=ex)
+    model1.rootAssembly.regenerate()
+
+    if PBC:
+        from Abaqus import lipeng
+        import time
+        oldtime=time.time()
+        #lipeng.Pipes_Pagano(m,ls[0])
+        SetINP,EquationINP=lipeng.Pipes_Pagano_INP(model1,notInclude=notEqNodeLabel,byNode=False)
+        print(len(SetINP),len(EquationINP))
+        j.writeInput(consistencyChecking=OFF)
+        
+        jobname=j.name
+        src=open("./%s.inp"%jobname,"r")
+        fname="./%s_Modified.inp"%jobname
+        dst=open(fname,"w+")
+
+        isEquationInserted=False
+        isSetInserted=False
+        instanceCnt=0
+        for line in src.readlines():
+            if not isEquationInserted and line.upper().startswith("*END ASSEMBLY"):
+                dst.write(EquationINP)
+                isEquationInserted=True
+            dst.write(line)
+            if not isSetInserted and line.upper().startswith("*END INSTANCE"):
+                if instanceCnt==1:
+                    dst.write(SetINP)
+                    isSetInserted=True
+                instanceCnt=instanceCnt+1
+    
+        src.close()
+        dst.close()
+        job=mdb.JobFromInputFile(name='%s_PBC'%jobname, inputFileName=fname)
+        print 'Elapsed:',time.time()-oldtime,'s' 
