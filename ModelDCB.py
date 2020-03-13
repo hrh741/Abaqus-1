@@ -25,10 +25,11 @@ if __name__ == '__main__' and __package__ is None:
     pth=os.path.dirname(curpath)
     if pth not in sys.path:
         sys.path.append(pth)
+
 from Abaqus import lipeng
+from Abaqus import Materials,UMATMaterial
 
 ACISEPS=1E-4
-
 def modelDCB(model1,ls,a,ws,plies,delta=1,zsymm=True):
     """
     ls: tuple (层合板长度, 长度方向不同边长对应的seed数目和ratio的字典XseedDict)
@@ -97,7 +98,7 @@ def modelDCB(model1,ls,a,ws,plies,delta=1,zsymm=True):
           material=plyProps[i], thicknessType=SPECIFY_THICKNESS, thickness=1.0, 
           orientationType=SPECIFY_ORIENT, orientationValue=plyAngles[i], 
           additionalRotationType=ROTATION_NONE, additionalRotationField='', 
-          axis=AXIS_3, angle=0.0, numIntPoints=3) # must use 1 for integral point 
+          axis=AXIS_3, angle=0.0, numIntPoints=1) # must use 1 for integral point 
         print("ply ",i," end")
 
     ## Step
@@ -129,7 +130,7 @@ def modelDCB(model1,ls,a,ws,plies,delta=1,zsymm=True):
         coords=map(lambda eg:eg.pointOn[0],
                     filter(lambda eg:abs(abs(lipeng.edge2vector(part11.vertices,eg)[0])-xl)<ACISEPS,
                             part11.edges))
-        print xl,xdiv,xratio,coords
+        print(xl,xdiv,xratio,coords)
         if len(coords)>0:
             xedges=part11.edges.findAt(coordinates=coords)
             rasm.seedEdgeByBias(biasMethod=DOUBLE, endEdges=xedges, constraint=FINER, number=xdiv, ratio=xratio)
@@ -193,58 +194,89 @@ def modelDCB(model1,ls,a,ws,plies,delta=1,zsymm=True):
     return job
 
 
-materials=[
-    ## 吴庆欣
-    ('T300-7901',(137.78e3,8.91e3,8.91e3,0.3,0.3,0.48,4.41e3,4.41e3,3.01e3),None,None), #
-    ('Pipes-Pagano',(20.0, 2.1, 2.1, 0.21, 0.21, 0.21, 0.85, 0.85, 0.85),None,None), #MPsi
-    ## Uguen A, Zubillaga L, Turon A, et al. Comparison of cohesive zone models used to predict delamination initiated from free-edges: validation against experimental results[C]//ECCM-16TH European Conference on Composite Materials. 2014.
-    ### GIc,GIIc,GIIIc,sigma_zz0,tau_xz0,tau_yz0=0.24,0.74,0.74,46,75,75
-    ('T800-M21',(130.0e3,8.0e3,8.0e3,0.31,0.31,0.45,4.0e3,4.0e3,4.0e3),None,None), #MPa
-    ## 
-    ('S2-SP250 GlasdEpoxy',None,None,None),
-    ## Initiation of free-edge delamination in composite laminates
-    ('G947-M18',(97.6e3, 8.0e3 ,8.0e3,0.37,0.37,0.5, 3.1e3, 3.1e3, 2.7e3),None,None),
-    ## Lorriot T, Marion G, Harry R, et al. Onset of free-edge delamination in composite laminates under tensile loading[J]. Composites Part B: Engineering, 2003, 34(5): 459-471.
-    ('T800-914',(159.0e3,8.4e3,8.4e3,0.31,0.31,0.45,4.0e3,4.0e3,4.0e3),None,None),
-    ## 顾嘉杰 毕业论文
-    ('IM7-914C',(153.6e3,10.2e3,10.2e3,0.27,0.27,0.46,5.7e3,5.7e3,3.5e3 ),None,None),
-    ## 
-    ('Expoxy 7901',(3.17e3, 0.355),None,None)
-]
-def Suo(Exx,Eyy,Gxy,nuxy,a,h,B):
-    # 平面应变
-    nuyx=nuxy*Eyy/Exx
-    rho=np.sqrt(Exx*Eyy)/(2.0*Gxy)-np.sqrt(nuxy*nuyx)
-    beta=(0.677+0.146*(rho-1)-0.0178*(rho-1)**2+0.00242*(rho-1)**3)/np.power(Eyy/Exx,1/4)
-    a_h=a/h
-    C=1/(24/(B*Exx)*(a_h**3/3+beta*a_h**2+beta**2*a_h))
-    return rho,beta,C
-
 if __name__=="__main__":
     crack_a=50
-    ls=(150.0,{2:(20,1.0),50:(30,10.0),98:(30,5.0)}) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
-    ws=(25.0,10,1.0)  #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
-    plies=[ (0,    1.5,    "T300-7901", 	20,	1.0),
-            (0,    1.5,    "T300-7901", 	20,	1.0),]
+    ls=(150.0,{2:[5,1.0],50:[100,1.0],98:[10,1.0]}) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
+    ws=[25.0,5,1.0]  #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
+    plies=[ [0,    1.5,    "T300-7901", 	40,	1.0],
+            (0,    1.5,    "T300-7901", 	40,	1.0),]
     zsymm=True
-    modelName='DCB-ZSYMM-Tip-11'
+    modelName='DCB'
+    
+    seeds=[16,400,20,5,50]
+    modelName='DCB-%d-%d-%d-%d-%d'%(seeds[0],seeds[1],seeds[2],seeds[3],seeds[4])
+    print(modelName)
+    ls[1][2][0]=seeds[0]
+    ls[1][50][0]=seeds[1]
+    ls[1][98][0]=seeds[2]
+    ws[1]=seeds[3]
+    plies[0][3]=seeds[4]
 
     model1=mdb.Model(name=modelName)
     model1.setValues(description='Longitude: %s\n Width: %s \n Plies: angle\t thickness \t material \t seedsize In height \n %s'%(repr(ls),repr(ws),repr(plies)))
-    for mat in materials:
-        if mat[1]:
-            material1=model1.Material(name=mat[0])
-            if len(mat[1])==9:
-                material1.Elastic(type=ENGINEERING_CONSTANTS, table=(mat[1], ))
-            elif len(mat[1])==2:
-                material1.Elastic(type=ISOTROPIC, table=(mat[1], ))
-    modelDCB(model1,ls,crack_a,ws,plies,zsymm=zsymm)
+    Materials(model1)
+
+    j=modelDCB(model1,ls,crack_a,ws,plies,zsymm=zsymm)
+    import time
+    oldTime=time.time()
+    j.submit()
+    j.waitForCompletion()
+    newTime=time.time()
+    o=openOdb('Job-%s.odb'%modelName,readOnly=True)
+    RF3=o.steps.values()[-1].historyRegions['Node PART-2-1.1'].historyOutputs['RF3'].data[1][1]
+    print(modelName,RF3)
+    o.close()
+    print('Elapsed ',newTime-oldTime,' s')
 
     """
+    for i in range(5):
+        seeds=[10,20,30,10,20]
+        for n in [2,80]:
+            seeds[i]=n
+            
+            modelName='DCB-%d-%d-%d-%d-%d'%(seeds[0],seeds[1],seeds[2],seeds[3],seeds[4])
+            print(modelName)
+            ls[1][2][0]=seeds[0]
+            ls[1][50][0]=seeds[1]
+            ls[1][98][0]=seeds[2]
+            ws[1]=seeds[3]
+            plies[0][3]=seeds[4]
+
+            model1=mdb.Model(name=modelName)
+            model1.setValues(description='Longitude: %s\n Width: %s \n Plies: angle\t thickness \t material \t seedsize In height \n %s'%(repr(ls),repr(ws),repr(plies)))
+            Materials(model1)
+            j=modelDCB(model1,ls,crack_a,ws,plies,zsymm=zsymm)
+            import time
+            oldTime=time.time()
+            j.submit()
+            j.waitForCompletion()
+            newTime=time.time()
+            print('Elapsed ',newTime-oldTime,' s')
+
+for i in range(5):
+    seeds=[10,20,30,10,20]
+    for n in [2,5,10,20,40,80]:
+        seeds[i]=n
+        
+        modelName='DCB-%d-%d-%d-%d-%d'%(seeds[0],seeds[1],seeds[2],seeds[3],seeds[4])
+        model1=mdb.models[modelName]
+        es=model1.rootAssembly.instances['Part-1-1'].elements.getByBoundingBox(xMax=crack_a+2.0/seeds[0]+ACISEPS,xMin=crack_a-ACISEPS,yMax=1.5/seeds[-1]+ACISEPS)
+        
+        o=openOdb('Job-%s.odb'%modelName,readOnly=True)
+        #sfo=o.steps.values()[-1].frames[-1].fieldOutputs['S']
+        RF3=o.steps.values()[-1].historyRegions['Node PART-2-1.1'].historyOutputs['RF3'].data[1][1]
+        print(modelName,RF3)
+        o.close()
+
+    model1=mdb.Model(name=modelName)
+    model1.setValues(description='Longitude: %s\n Width: %s \n Plies: angle\t thickness \t material \t seedsize In height \n %s'%(repr(ls),repr(ws),repr(plies)))
+    Materials(model1)
+    modelDCB(model1,ls,crack_a,ws,plies,zsymm=zsymm)
+
     crack_list=range(50,51)
     modelnameFormat='DCB-1mm-%d'
     for crack_a in crack_list:
-        print '%d/%d : '%(crack_a-50,60),crack_a
+        print('%d/%d : '%(crack_a-50,60),crack_a)
         modelName=modelnameFormat%crack_a
 
         j=modelDCB(model1,ls,crack_a,ws,plies)
@@ -253,14 +285,14 @@ if __name__=="__main__":
         j.submit()
         j.waitForCompletion()
         newTime=time.time()
-        print 'Elapsed ',newTime-oldTime,' s'
+        print('Elapsed ',newTime-oldTime,' s')
 
     if 'DCB' not in globals():
         DCB=dict()
 
     for a in crack_list:
         modelName=modelnameFormat%a
-        print modelName
+        print(modelName)
         o=openOdb('Job-%s.odb'%modelName,readOnly=True)
         model1=mdb.models[modelName]
         sfo=o.steps.values()[-1].frames[-1].fieldOutputs['S']
@@ -296,12 +328,6 @@ if __name__=="__main__":
                 widthY=(coordBound[0][2]+coordBound[1][2])/2.0
                 fp.write('\t'.join(['','','','%d'%k,'%f'%widthY,'\t'.join(('%f'%x for x in stress))]))
                 fp.write('\n')
-            print modelName,a,'\t'.join(['%f'%x for x in d[midElmLabel][1]]),RF2
+            print(modelName,a,'\t'.join(['%f'%x for x in d[midElmLabel][1]]),RF2)
 
-for jobname in mdb.jobs.keys():
-    o=openOdb('%s.odb'%jobname,readOnly=True)
-    RF=o.steps.values()[-1].historyRegions['Node PART-2-1.1'].historyOutputs['RF2'].data[1]
-    print jobname,RF
-    o.close()    
     """
-

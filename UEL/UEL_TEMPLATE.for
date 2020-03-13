@@ -25,6 +25,7 @@ C
         RHS(1:NDOFEL,1)=0.D0
         AMATRX= 0.D0
         PRINT *,DTIME,NDOFEL,MLVARX
+        
         ! set up gauss integration points GP and weights  GW
         CALL KGUASS(NNODE,MCRD,nINTP,GP,GW)
 

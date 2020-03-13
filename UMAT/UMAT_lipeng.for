@@ -1,14 +1,18 @@
+C                   V2.2
+C     添加了
+C       1. URDFIL 用于判断是否结束计算
+C       2. UEXTERNALDB
 C                   V2.1
 C     V2.1 说明:
 C       添加基体层-基体材料的UMAT支持，注意复合材料用UMAT-Composite 基体材料用UMAT-Matrix
 C			注意
 C     1. 在UMAT的计算中中间变量都是用传统的应力应变顺序
-C     FIBER,RESIN中模量的顺序为E11,E22,E33,v23,v13,v12,G23,G13,G12    
+C     FIBER,RESIN中模量的顺序为E11,E22,E33,v23,v13,v12,G23,G13,G12
 C			SSM SSF顺序为传统顺序 11 22 33 23 13 12  
 C     2. 在子过程中，注意默认类型要与输入参数匹配  一般所有的BUG都是这个问题
 C       不要声明了与变量名不符合的类型后 
 C
-C     
+C
 C                   PROPS范例
 C     #基体的九个弹性常数加上三个拉压剪模量 E11,E22,E33,V12,V13,V23,G12,G13,G23
 C     4100., 4100., 4100., 0.46, 0.46,   0.46,  1400.,  1400., 1400.,121.,210.,76.,
@@ -21,12 +25,14 @@ C     6.,
 C     #ETM 基体塑性阶段折线强度和模量
 C     42.7,   53.7,   76.5,  101.5,  111.3,   125.,  
 C     4100.,  2500.,  2000.,  1400.,   800.,   410.,   
-C     #STATEV(13): SSF(6) SSM(6) 衰减次数
-C     1., 2.,3.,4.,5.,6.,7.,8.,9., 10.,11.,12.,
+C     #STATEV(13): SSF(6) SSM(6)
+C     0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
 C     #KT22  KTT22 KC22 K12 K23 
 C     2.322,  5.083,  1.656,  1.447,1.87,1.72,1.69 ,
 C     LMISE RF 破坏判据的选择
 C     54.4,   0.01,  1
+C
+C
       SUBROUTINE UMAT(STRESS,STATEV,DDSDDE,SSE,SPD,SCD,RPL,DDSDDT,
      1 DRPLDE,DRPLDT,STRAN,DSTRAN,TIME,DTIME,TEMP,DTEMP,PREDEF,DPRED,
      2 CMNAME,NDI,NSHR,NTENS,NSTATV,PROPS,NPROPS,COORDS,DROT,
@@ -39,20 +45,24 @@ C     54.4,   0.01,  1
      2 TIME(2),PREDEF(1),DPRED(1),PROPS(NPROPS),COORDS(3),DROT(3,3),
      3 DFGRD0(3,3),DFGRD1(3,3),JSTEP(4)
 
-        IF (CMNAME(1:14) .EQ. 'UMAT-COMPOSITE') THEN
+
+        IF(CMNAME(1:11) .EQ. 'UMAT-MATRIX') THEN
+          CALL UMAT_MAT2(STRESS,STATEV,DDSDDE,SSE,SPD,SCD,RPL,DDSDDT,
+     1 DRPLDE,DRPLDT,STRAN,DSTRAN,TIME,DTIME,TEMP,DTEMP,PREDEF,DPRED,
+     2 CMNAME,NDI,NSHR,NTENS,NSTATV,PROPS,NPROPS,COORDS,DROT,
+     3 PNEWDT,CELENT,DFGRD0,DFGRD1,NOEL,NPT,LAYER,KSPT,KSTEP,KINC)
+        ELSE 
           CALL UMAT_MAT1(STRESS,STATEV,DDSDDE,SSE,SPD,SCD,RPL,DDSDDT,
      1 DRPLDE,DRPLDT,STRAN,DSTRAN,TIME,DTIME,TEMP,DTEMP,PREDEF,DPRED,
      2 CMNAME,NDI,NSHR,NTENS,NSTATV,PROPS,NPROPS,COORDS,DROT,
      3 PNEWDT,CELENT,DFGRD0,DFGRD1,NOEL,NPT,LAYER,KSPT,KSTEP,KINC)
 
-        ELSE IF(CMNAME(1:11) .EQ. 'UMAT-MATRIX') THEN
-          CALL UMAT_MAT2(STRESS,STATEV,DDSDDE,SSE,SPD,SCD,RPL,DDSDDT,
-     1 DRPLDE,DRPLDT,STRAN,DSTRAN,TIME,DTIME,TEMP,DTEMP,PREDEF,DPRED,
-     2 CMNAME,NDI,NSHR,NTENS,NSTATV,PROPS,NPROPS,COORDS,DROT,
-     3 PNEWDT,CELENT,DFGRD0,DFGRD1,NOEL,NPT,LAYER,KSPT,KSTEP,KINC)
         END IF
       END SUBROUTINE
-      
+
+C
+C***********************************************************************
+C
       SUBROUTINE UMAT_MAT1(STRESS,STATEV,DDSDDE,SSE,SPD,SCD,RPL,DDSDDT,
      1 DRPLDE,DRPLDT,STRAN,DSTRAN,TIME,DTIME,TEMP,DTEMP,PREDEF,DPRED,
      2 CMNAME,NDI,NSHR,NTENS,NSTATV,PROPS,NPROPS,COORDS,DROT,
@@ -73,23 +83,10 @@ C     54.4,   0.01,  1
      1SF(6,6),SM(6,6),SL(6,6),A(6,6),B(6,6),ETM(2,20),SSF(6),SSM(6),
      2DSTRESS(6)
 
-      CHARACTER*256 JOBNAME,CP,DIR
-      INTEGER LJ,LD 
-      
-      CALL GETJOBNAME(JOBNAME, LJ )
-      DIR='E:/UMAT-OUTPUT/'
-      LD=LEN_TRIM(DIR)
-      CP(1:LD)=DIR
-      CP((LD+1):(LJ+LD))=JOBNAME(1:LJ)
-      !OPEN(101,FILE='E:\dadelamination.TXT',STATUS='UNKNOWN')
-      OPEN(102,FILE=CP(1:LJ+LD)//'-matrix.txt',STATUS='UNKNOWN')
-      OPEN(103,FILE=CP(1:LJ+LD)//'-fiber.txt',STATUS='UNKNOWN')
-      
       CALL KADJUST(PROPS,NPROPS,STATEV,NSTATV,RESIN,FIBER,VF,ALFA,
      1 BETA,MSEG,ETM,SSF,SSM,RF,SCFS,LMISE,FAILCHS,NOEL,KINC)
-            
+
       CALL KFIBER(FIBER,EGF,SUUF,SF,NOEL)
-      
       CALL KMATRIX(RESIN,EGM,SM,SSM,ETM,MSEG,STATEV(13),RF,
      1 SUUM,NOEL,KINC)
 
@@ -102,7 +99,6 @@ C     54.4,   0.01,  1
       !END IF
 
       CALL KBRIGE(VF,EGF,SF,EGM,SM,ALFA,BETA,A,B,SL,NOEL)
-      
       CALL ABQ2NORM_1D(STRESS)
       ! 注意DSTRAN的应变分量顺序
       CALL KSTRESS(VF,SF,SM,A,B,SL,DDSDDE,STRESS,DSTRAN,STATEV,
@@ -110,38 +106,36 @@ C     54.4,   0.01,  1
 
       CALL KINTER(DDSDDE,DSTRAN,DSTRESS,A,B,VF,SSF,SSM,SCFS,LMISE,
      1 STATEV,NSTATV,NOEL)
-      
+
       CALL NORM2ABQ_1D(STRESS)
       CALL NORM2ABQ_2D(DDSDDE)
 
-      IF(NOEL.EQ.1) THEN
-        WRITE(*,'(A6,I7,\)') 'KINC',KINC,'KSTEP',KSTEP,'NOEL',NOEL
-        PRINT *,''
+      IF(NOEL.EQ.1 .AND. .TRUE.) THEN
         !PRINT *,NSTATV
         PRINT *,"STATEV"
         WRITE(*,"(12F20.5)") (STATEV(I),I=1,12)
         !PRINT *,"SCFS"
         !WRITE(*,*) SCFS
-        PRINT *,"SF"
-        WRITE(*,'(6F20.15)') ((SF(I,J),J=1,6),I=1,6)
-        PRINT *,"SM"
-        WRITE(*,'(6F20.15)') ((SM(I,J),J=1,6),I=1,6)
-        PRINT *,"A"
-        WRITE(*,'(6F20.15)') ((A(I,J),J=1,6),I=1,6)
+        !PRINT *,"SF"
+        !WRITE(*,'(6F20.15)') ((SF(I,J),J=1,6),I=1,6)
+        !PRINT *,"SM"
+        !WRITE(*,'(6F20.15)') ((SM(I,J),J=1,6),I=1,6)
+        !PRINT *,"A"
+        !WRITE(*,'(6F20.15)') ((A(I,J),J=1,6),I=1,6)
         !PRINT *,"B"
         !WRITE(*,'(6F20.15)') ((B(I,J),J=1,6),I=1,6)      
         !PRINT *,"SL"
         !WRITE(*,'(6F20.15)') ((SL(I,J),J=1,6),I=1,6)
-        PRINT *,"DSTRAN"
-        WRITE(*,'(6F20.15)') (DSTRAN(J),J=1,6)      
-        PRINT *,"STRESS"
-        WRITE(*,'(6F20.5)') (STRESS(J),J=1,6)   
-        PRINT *,"SSF"
-        WRITE(*,'(6F20.5)') (SSF(J),J=1,6)
-        PRINT *,"SSM"
-        WRITE(*,'(6F20.5)') (SSM(J),J=1,6)
-        PRINT *,"DDSDDE"
-        WRITE(*,'(6F20.5)') ((DDSDDE(I,J),J=1,6),I=1,6)
+        !PRINT *,"DSTRAN"
+        !WRITE(*,'(6F20.15)') (DSTRAN(J),J=1,6)      
+        !PRINT *,"STRESS"
+        !WRITE(*,'(6F20.5)') (STRESS(J),J=1,6)   
+        !PRINT *,"SSF"
+        !WRITE(*,'(6F20.5)') (SSF(J),J=1,6)
+        !PRINT *,"SSM"
+        !WRITE(*,'(6F20.5)') (SSM(J),J=1,6)
+        !PRINT *,"DDSDDE"
+        !WRITE(*,'(6F20.5)') ((DDSDDE(I,J),J=1,6),I=1,6)
       END IF
 
       RETURN 
@@ -829,7 +823,7 @@ C     计算单元的刚度矩阵并更新单元的应力
         CALL ABQ2NORM_1D(TMPD)
         DO I=1,6
           DO J=1,6
-            STRESS(I)=STRESS(I)*(RF**STATEV(14))+DDSDDE(I,J)*TMPD(J)
+            STRESS(I)=STRESS(I)+DDSDDE(I,J)*TMPD(J)!*(RF**STATEV(14))
           END DO
         END DO
         RETURN
@@ -950,6 +944,7 @@ C     计算纤维和基体的内应力
           TMPD(I)=DSTRAN(I)
         END DO
         CALL ABQ2NORM_1D(TMPD)
+
         DO I=1,6
             DSTRESS(I)=0
         END DO
@@ -1084,8 +1079,8 @@ C
             SE=(S1**3+S2**3+S3**3)**(1./3.)
         ENDIF
         IF(SE.GT.SUUF(1))THEN
-          STATEV(14)=1
-          WRITE(103,*) 'FIBER IS BROKEN',NOEL,KINC
+          STATEV(14)=1.0
+          WRITE(103,*) 'FIBER_BROKEN',NOEL,KINC
         ENDIF
 
         ! 基体破坏判据
@@ -1094,16 +1089,16 @@ C
           CALL KTSAIWU(SSM,SUUM,ID,FAILTYPE,KINC,NOEL)
           IF(ID.EQ.1)THEN
               IF(STATEV(13).NE.1) THEN
-                WRITE(102,*) 'MATRIX IS BROKEN',NOEL,KINC
+                WRITE(102,*) 'MATRIX_BROKEN',NOEL,KINC
               END IF
-              STATEV(13)=1
+              STATEV(13)=1.0
           ENDIF
         ELSE IF(FAILCHS.EQ.2)THEN
           ID=0
           CALL KMOHR(SSM,SUUM,ID,FAILTYPE,ANZ)
           IF(ID.EQ.1)THEN
             IF(STATEV(1).NE.1) THEN
-              WRITE(102,*) 'MATRIX IS BROKEN',ANZ,NOEL,KINC
+              WRITE(102,*) 'MATRIX_BROKEN',ANZ,NOEL,KINC
             END IF
               STATEV(13)=1
           ENDIF
@@ -1352,7 +1347,7 @@ C   VECS: 列为LBDS对应的单位特征向量
 C
 C***********************************************************************
 C
-C     应力应变向量从一般顺序11 22 33 23 13 12转换为Abaqus的顺序 11 22 33 12 13 23
+C  应力应变向量从一般顺序11 22 33 23 13 12转换为Abaqus的顺序 11 22 33 12 13 23
 C
       SUBROUTINE NORM2ABQ_1D(VEC)
         INCLUDE 'ABA_PARAM.INC'
@@ -1438,8 +1433,11 @@ C
      3 DFGRD0(3,3),DFGRD1(3,3),JSTEP(4)
       
       DIMENSION RESIN(12),EGM(9),SUUM(3),ETM(2,20),SSM(6)
-      DIMENSION SM(6,6),SK(6,6),DSTRESS(6),TMPD(6)
+      DIMENSION SM(6,6),SK(6,6),DSTRESS(6),TMPD(6),TMPT(6)
 
+      REAL CK !Efficien of stress scale 
+      
+      !CK=3.95 !for 1mm ! 1.0135 ! for 0.25mm ! 1.6 ! for 0.5 mm !  
       ! Initialize form PROPS
       I_P=1
       E=PROPS(I_P)
@@ -1448,7 +1446,7 @@ C
         RESIN(I)=E
         RESIN(3+I)=V
         RESIN(6+I)=E/(2+2*V)
-        RESIN(9+I)=PROPS(I+3)
+        RESIN(9+I)=PROPS(I+2)
       END DO
       I_P=I_P+5
       
@@ -1459,46 +1457,196 @@ C
       END DO
       I_P=I_P+2*NMSEG+1
       RF=PROPS(I_P)
+      CK=PROPS(I_P+1)
+      IF(NPROPS.GT.I_P+1) THEN
+        ICHS_Z_OR_Q=PROPS(I_P+2)
+      ELSE
+        ICHS_Z_OR_Q=0  ! 如果Props不存在设置选择增量还是全量  默认全量
+      END IF
 
       ! Initialize from STATEV
       SSM(1:6)=STATEV(1:6)
-      CALL KMATRIX(RESIN,EGM,SM,SSM,ETM,NMSEG,STATEV(13),RF,
+      CALL KMATRIX(RESIN,EGM,SM,SSM,ETM,NMSEG,STATEV(15),RF,
      1  SUUM,NOEL,KINC)
       
       CALL KINVER2(SM,SK,6,L)
       CALL ABQ2NORM_1D(STRESS)
       DO I=1,6
         TMPD(I)=DSTRAN(I)
+        TMPT(I)=STRAN(I)+DSTRAN(I)
       END DO
       CALL ABQ2NORM_1D(TMPD)
-      DO I=1,6
-        SUM=0D0
-        DO J=1,6
-          DDSDDE(I,J)=SK(I,J)
-          SUM=SUM+SK(I,J)*TMPD(J)
-        END DO
-        !STRESS(I)=STRESS(I)+SUM !增量式
-        STRESS(I)=SUM !全量式
-      END DO
+      CALL ABQ2NORM_1D(TMPT)
+            
+      DDSDDE(1:6,1:6)=SK
+      IF(ICHS_Z_OR_Q.EQ.1) THEN
+        STRESS=STRESS+MATMUL(SK,TMPD) !增量式
+      ELSE
+        STRESS=MATMUL(SK,TMPT)    ! 全量式
+      END IF
 
+      IF(NOEL.EQ.1) THEN
+        PRINT '(37F15.4)',CK,RESIN,STRAN,DSTRAN,SK(1,1:6),STRESS
+        PRINT '(F15.4)',STATEV(16)
+      END IF
       STATEV(1:6)=STRESS(1:6)
-      IF(STATEV(13).EQ.0)THEN
-        F1=(SUUM(2)-SUUM(1))/(SUUM(1)*SUUM(2))
-        F11=1/(SUUM(1)*SUUM(2))
-        F44=1/(SUUM(3)**2)
+      IF(STATEV(15).EQ.0.0)THEN
+        F1=(SUUM(2)-SUUM(1))/(SUUM(1)*SUUM(2))*CK
+        F11=1/(SUUM(1)*SUUM(2))*CK**2
+        F44=1/(SUUM(3)**2)*CK**2
 
         SMISE=F1*(STRESS(1)+STRESS(2)+STRESS(3))+F11*
      1  (STRESS(1)**2+STRESS(2)**2+STRESS(3)**2-STRESS(1)*STRESS(2)
      2  -STRESS(2)*STRESS(3)-STRESS(3)*STRESS(1))
      3  +F44*(STRESS(4)**2+STRESS(5)**2+STRESS(6)**2)
-          
-        IF(SMISE.GT.1.)THEN
-          STATEV(13)=1.0D0
-          WRITE(*,*) 'Resin Layer Broken: ','NOEL=',NOEL,'KINC=',KINC
+
+        IF(SMISE.GE.1.) THEN
+          PRINT '(I6,10F15.4)',NOEL,F1,F11,F44,STRESS,SMISE
+          STATEV(15)=1.0D0
+          WRITE(104,*) 'Resin_Layer_Broken: NOEL= ',NOEL,'KSTEP:',KSTEP,'KINC=',KINC
         ENDIF
       ENDIF
 
       CALL NORM2ABQ_1D(STRESS)
       CALL NORM2ABQ_2D(DDSDDE)
+
+      IF(STATEV(15).EQ.1.) THEN
+        STATEV(16)=0.0        
+        !STRESS=0.0
+        !DO I=1,6
+        !  DDSDDE(I,I)=1e4
+        !END DO
+      END IF
+
       RETURN 
+      END SUBROUTINE
+
+C
+C***********************************************************************
+C
+C   将会在分析步开始时、分析步结束时、增量步开始时、增量步结束时等被调用
+C   用于
+C     manage user-defined external databases 
+C     calculate model-independent history information
+C   常见Abaqus/Standard subroutines> 1.1.31 UEXTERNALDB
+C
+      SUBROUTINE UEXTERNALDB(LOP,LRESTART,TIME,DTIME,KSTEP,KINC)
+C
+      INCLUDE 'ABA_PARAM.INC'
+C
+      DIMENSION TIME(2)
+C
+      ! user coding to set up the FORTRAN environment, open files, close files, 
+      ! calculate user-defined model-independent history information,
+      ! write history information to external files,
+      ! recover history information during restart analyses, etc.
+      ! do not include calls to utility routine XIT
+      CHARACTER*256 JOBNAME,CP,DIR
+      INTEGER LJ,LD 
+
+      IF(LOP.EQ.0.OR. LOP.EQ.4) THEN
+        IF(LOP.EQ.0) THEN 
+          ! Start of Analysis
+          PRINT *,'Analysis Start!'
+        ELSE
+          ! Beginning of a restart analysis
+          PRINT *,'Restart Analysis Start!'
+        END IF
+
+        CALL GETJOBNAME(JOBNAME, LJ )
+        DIR='E:/UMAT-OUTPUT/'
+        LD=LEN_TRIM(DIR)
+        CP(1:LD)=DIR
+        CP((LD+1):(LJ+LD))=JOBNAME(1:LJ)
+        
+        !OPEN(101,FILE='E:\dadelamination.TXT',STATUS='UNKNOWN')
+        OPEN(102,FILE=CP(1:LJ+LD)//'-matrix.txt',STATUS='UNKNOWN')
+        OPEN(103,FILE=CP(1:LJ+LD)//'-fiber.txt',STATUS='UNKNOWN')
+        OPEN(104,FILE=CP(1:LJ+LD)//'-resinLayer.txt',STATUS='UNKNOWN')
+
+      ELSE IF(LOP.EQ.3) THEN
+        ! End of Analysis
+        PRINT *,'Analysis End!'
+        
+      ELSE IF(LOP.EQ.1) THEN
+        ! Start of the current analysis increment
+        WRITE(*,'(A,I3,A,I3,\)') ' Start Step',KSTEP,' Increment ',KINC
+        WRITE(*,'(A,F6.3,\)') ' Step Time:',TIME(1)
+        WRITE(*,'(A,F6.3,\)') ' Total Time:',TIME(2)
+        WRITE(*,'(A,F6.3)') ' DTime:',DTIME
+      
+      ELSE IF(LOP.EQ.2) THEN
+        ! End of the current analysis increment
+        WRITE(*,'(A,I3,A,I3,\)') ' End Step',KSTEP,' Increment ',KINC
+        WRITE(*,'(A,F6.3,\)') ' Step Time:',TIME(1)
+        WRITE(*,'(A,F6.3,\)') ' Total Time:',TIME(2)
+        WRITE(*,'(A,F6.3)') ' DTime:',DTIME
+      
+      ELSE IF(LOP.EQ.5) THEN
+        ! Start of a step
+        PRINT *,'Step',KSTEP,' Start!'
+
+      ELSE IF(LOP.EQ.6) THEN
+        ! End of a step
+        PRINT *,'Step',KSTEP,' End!'
+
+      END IF
+
+      RETURN
+      END
+
+C
+C***********************************************************************
+C
+C    在每个增量的结束时调用
+C    检查是否有单元发生纤维破坏STATEV(14)==1，如果有纤维发生破坏，停止计算
+C
+C     要使URDFIL被调用，需要在inp文件step 段中添加 
+C     *EL File
+C     SDV
+C     CAE界面里： Model->edit Keyword下添加
+C     参见Analysis User Guide>4.1.2 Output to the data and results files
+C     
+      SUBROUTINE URDFIL(LSTOP, LOVRWRT, KSTEP, KINC,DTIME,TIME)
+
+        INCLUDE 'ABA_PARAM.INC'
+        DIMENSION ARRAY(513), JRRAY(NPRECD, 513), TIME(2)
+        EQUIVALENCE (ARRAY(1),JRRAY(1,1)) ! 分别用于获取浮点数和整数
+        
+        DIMENSION STATEV(15)
+
+        WRITE(*,'(A,I3,A,I3,\)') ' URDFIL Step:',KSTEP,' Increment:',KINC
+        WRITE(*,'(A,F6.3,\)') ' Step Time:',TIME(1)
+        WRITE(*,'(A,F6.3,\)') ' Total Time:',TIME(2)
+        WRITE(*,'(A,F6.3)') ' DTime:',DTIME
+
+        LSTOP=0   ! can't be termianated
+        LOVRWRT=1 ! this inc can be over write
+
+        CALL POSFIL(KSTEP, KINC, ARRAY, JRCD)
+        DO K1=1,999999
+          CALL DBFILE(0,ARRAY,JRCD)
+          IF (JRCD .NE. 0) GO TO 110
+          KEY=JRRAY(1,2)
+          IF(KEY.EQ.1) THEN 
+            IELM=JRRAY(1,3)
+          END IF
+
+          IF(KEY.EQ.5) THEN
+            DO I=1,15
+              STATEV(I)=ARRAY(I+2)
+            END DO
+            IF(STATEV(14).GE.1.0 ) THEN ! .OR. STATEV(15).GE.1.0
+              PRINT '(I6,15F10.4)',IELM,STATEV
+              ! 当不处于分析步的结尾时
+              IF(TIME(1).NE.1.0) THEN
+                LSTOP=1   ! terminate analysis 
+                LOVRWRT=0 ! this inc can't be over write
+              END IF
+            END IF
+          END IF
+        END DO
+  110   CONTINUE
+
+        PRINT '(A,I3,A,I3)', ' LSTOP: ',LSTOP, ' LOVRWRT: ',LOVRWRT
       END SUBROUTINE

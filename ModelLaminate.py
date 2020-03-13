@@ -14,6 +14,7 @@ import visualization
 import xyPlot
 from odbAccess import *
 
+
 if __name__ == '__main__' and __package__ is None:
     """
 
@@ -27,14 +28,19 @@ if __name__ == '__main__' and __package__ is None:
     if pth not in sys.path:
         sys.path.append(pth)
 
-from Abaqus.lipeng import edge2vector
+import Abaqus.lipeng  as lipeng
+edge2vector=lipeng.edge2vector
+from Abaqus.Materials import UMATMaterial,Materials
 
 ACISEPS=1E-6
-
-def modelLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=0.1):
+def modelLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=0.01):
     """
     ls: tuple (层合板长度,长度方向的单元数目,double seed 的长度比例)
     ws: tuple (层合板宽度,宽度方向上的单元数目,double seed 的长度比例)
+    plies: 层合板铺排角、厚度信息以及厚度方向网格信息
+    halfStructure: 含三个变量的数组，分别表示是否使用轴向、横向以及厚度方向上的对称关系
+    EquationOrDisplacement： 使用Equation 约束(适合轴向单个单元的)或者直接使用端部位移约束（适合完整的层合板结构）
+    ex: 轴向加载的轴向应变
     """
     l,xdiv,xratio=ls
     w,ydiv,yratio=ws
@@ -89,7 +95,7 @@ def modelLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=0.1
           material=plyProps[i], thicknessType=SPECIFY_THICKNESS, thickness=1.0, 
           orientationType=SPECIFY_ORIENT, orientationValue=plyAngles[i], 
           additionalRotationType=ROTATION_NONE, additionalRotationField='', 
-          axis=AXIS_3, angle=0.0, numIntPoints=3) # must use 1 for integral point 
+          axis=AXIS_3, angle=0.0, numIntPoints=1) # must use 1 for integral point 
         print("ply ",i," end")
 
     ## Step
@@ -180,30 +186,29 @@ def modelLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=0.1
         #notEqNodeLabel.update([n.label for n in Z0.nodes])
         ## 不要不要将Z0放入不添加约束的集合里，U1,U2的约束没有的话计算结果会出现错误
         #print(len(notEqNodeLabel))
+    
+    part2 = model1.Part(name='Part-2', dimensionality=THREE_D,
+        type=DEFORMABLE_BODY)
+    part2.ReferencePoint(point=(lam_len+1, 0.0, 0.0))
+    myInstance2=model1.rootAssembly.Instance(dependent=ON, name='Part-2-1', 
+        part=part2)
+    faces=myInstance1.faces.getByBoundingBox(xMin=lam_len-ACISEPS,xMax=lam_len+ACISEPS)
+    rasm.Set(faces=faces,name='x-load')
+    r1 = myInstance2.referencePoints.findAt((lam_len+1.0,0,0))
+    refPoints1=(r1,)
+    xref=rasm.Set(referencePoints = refPoints1, name='x-ref')
+    model1.HistoryOutputRequest(name='H-Output-Ref',
+        createStepName='Step-1', variables=('U', 'RF'), region=xref,
+        sectionPoints=DEFAULT, rebar=EXCLUDE)
 
     if EquationOrDisplacement==0:
-        part2 = model1.Part(name='Part-2', dimensionality=THREE_D,
-            type=DEFORMABLE_BODY)
-        part2.ReferencePoint(point=(lam_len+1, 0.0, 0.0))
-        myInstance2=model1.rootAssembly.Instance(dependent=ON, name='Part-2-1', 
-          part=part2)
-        faces=myInstance1.faces.getByBoundingBox(xMin=lam_len-ACISEPS,xMax=lam_len+ACISEPS)
-        rasm.Set(faces=faces,name='x-load')
-        r1 = myInstance2.referencePoints.findAt((lam_len+1.0,0,0))
-        refPoints1=(r1,)
-        xref=rasm.Set(referencePoints = refPoints1, name='x-ref')
         #model1.Equation(name='Constraint-1', terms=((1.0, 'x-load',1), (-1.0, 'x-ref', 1)))
-        model1.TabularAmplitude(name='disp-amp', timeSpan=TOTAL,
-            smooth=SOLVER_DEFAULT, data=((0.0, 0.0), (1.0, 1.0)))
         model1.DisplacementBC(name='X=1-Tension', createStepName='Step-1',
             region=xref, u1=ex*lam_len, u2=UNSET, u3=UNSET, ur1=UNSET, ur2=UNSET,
-            ur3=UNSET, amplitude='disp-amp', fixed=OFF, distributionType=UNIFORM,
+            ur3=UNSET,fixed=OFF, distributionType=UNIFORM,
             localCsys=None)
         model1.historyOutputRequests['H-Output-1'].setValues(
             frequency=1)
-        model1.HistoryOutputRequest(name='H-Output-Ref',
-            createStepName='Step-1', variables=('U', 'RF'), region=xref,
-            sectionPoints=DEFAULT, rebar=EXCLUDE)
     else:
         ## 注意不要将边界条件都约束住 U2,U3 否则 会发现中间区域的应力与经典层合板理论不符合
         #model1.EncastreBC(name='X=0-ENCAST',createStepName='Initial',region=X0, localCsys=None)
@@ -211,13 +216,23 @@ def modelLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=0.1
         #    distributionType=UNIFORM, fieldName='', fixed=OFF, localCsys=None, name='X=1-TENSION',
         #    region=X1, u1=ex*lam_len, u2=UNSET, u3=UNSET, ur1=UNSET, ur2=UNSET, ur3=UNSET)
 
+        """
         model1.DisplacementBC(amplitude=UNSET, createStepName='Step-1', 
             distributionType=UNIFORM, fieldName='', fixed=OFF, localCsys=None, name='X=0-TENSION',
             region=X0, u1=0.0, u2=0, u3=0, ur1=UNSET, ur2=UNSET, ur3=UNSET)
         model1.DisplacementBC(amplitude=UNSET, createStepName='Step-1', 
             distributionType=UNIFORM, fieldName='', fixed=OFF, localCsys=None, name='X=1-TENSION',
             region=X1, u1=ex*lam_len, u2=0, u3=0, ur1=UNSET, ur2=UNSET, ur3=UNSET)
-
+        """
+        model1.DisplacementBC(amplitude=UNSET, createStepName='Step-1', 
+            distributionType=UNIFORM, fieldName='', fixed=OFF, localCsys=None, name='X=0-TENSION',
+            region=X0, u1=0.0, u2=0, u3=0, ur1=UNSET, ur2=UNSET, ur3=UNSET)
+        model1.DisplacementBC(amplitude=UNSET, createStepName='Step-1', 
+            distributionType=UNIFORM, fieldName='', fixed=OFF, localCsys=None, name='X=1-TENSION',
+            region=xref, u1=ex*lam_len, u2=UNSET, u3=UNSET, ur1=UNSET, ur2=UNSET, ur3=UNSET)
+        model1.Equation(name='Constraint-1', terms=((1.0, 'X1',1), (-1.0, 'x-ref', 1)))
+        model1.Equation(name='Constraint-2', terms=((1.0, 'X1',2), (-1.0, 'x-ref', 2)))
+        model1.Equation(name='Constraint-3', terms=((1.0, 'X1',3), (-1.0, 'x-ref', 3)))
     ## Job    
     descinfo='%s\r\n %s\r\n %s\r\n'%(str((lam_len,lam_wid,lam_hgt)),",".join([str(x) for x in (xdiv,ydiv)]),str(plyAngles))
     suffix="".join(("XYZ"[i] if halfStructure[i]==1 else "" for i in xrange(3)))
@@ -226,27 +241,40 @@ def modelLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=0.1
     jobname="Job-%s"%model1.name
     job=mdb.Job(name=jobname,
         description=descinfo,model=model1,numCpus=1,numGPUs=0)
-    
-    return model1,job,notEqNodeLabel
 
-materials=[
-    ## 吴庆欣
-    ('T300-7901',(137.78e3,8.91e3,8.91e3,0.3,0.3,0.48,4.41e3,4.41e3,3.01e3),None,None), #
-    ('Pipes-Pagano',(20.0, 2.1, 2.1, 0.21, 0.21, 0.21, 0.85, 0.85, 0.85),None,None), #MPsi
-    ## Uguen A, Zubillaga L, Turon A, et al. Comparison of cohesive zone models used to predict delamination initiated from free-edges: validation against experimental results[C]//ECCM-16TH European Conference on Composite Materials. 2014.
-    ### GIc,GIIc,GIIIc,sigma_zz0,tau_xz0,tau_yz0=0.24,0.74,0.74,46,75,75
-    ('T800-M21',(130.0e3,8.0e3,8.0e3,0.31,0.31,0.45,4.0e3,4.0e3,4.0e3),None,None), #MPa
-    ## 
-    ('S2-SP250 GlasdEpoxy',None,None,None),
-    ## Initiation of free-edge delamination in composite laminates
-    ('G947-M18',(97.6e3, 8.0e3 ,8.0e3,0.37,0.37,0.5, 3.1e3, 3.1e3, 2.7e3),None,None),
-    ## Lorriot T, Marion G, Harry R, et al. Onset of free-edge delamination in composite laminates under tensile loading[J]. Composites Part B: Engineering, 2003, 34(5): 459-471.
-    ('T800-914',(159.0e3,8.4e3,8.4e3,0.31,0.31,0.45,4.0e3,4.0e3,4.0e3),None,None),
-    ## 顾嘉杰 毕业论文
-    ('IM7-914C',(153.6e3,10.2e3,10.2e3,0.27,0.27,0.46,5.7e3,5.7e3,3.5e3 ),None,None),
-    ## 
-    ('Expoxy 7901',(3.17e3, 0.355),None,None)
-]
+    if EquationOrDisplacement==0:
+        from Abaqus import lipeng
+        import time
+        oldtime=time.time()
+        #lipeng.Pipes_Pagano(m,ls[0])
+        SetINP,EquationINP=lipeng.Pipes_Pagano_INP(model1,notInclude=notEqNodeLabel,byNode=False)
+        print(len(SetINP),len(EquationINP))
+        job.writeInput(consistencyChecking=OFF)
+        
+        jobname=job.name
+        src=open("./%s.inp"%jobname,"r")
+        fname="./%s_Modified.inp"%jobname
+        dst=open(fname,"w+")
+
+        isEquationInserted=False
+        isSetInserted=False
+        instanceCnt=0
+        for line in src.readlines():
+            if not isEquationInserted and line.upper().startswith("*END ASSEMBLY"):
+                dst.write(EquationINP)
+                isEquationInserted=True
+            dst.write(line)
+            if not isSetInserted and line.upper().startswith("*END INSTANCE"):
+                if instanceCnt==1:
+                    dst.write(SetINP)
+                    isSetInserted=True
+                instanceCnt=instanceCnt+1
+    
+        src.close()
+        dst.close()
+        job=mdb.JobFromInputFile(name='%s_PBC'%jobname, inputFileName=fname)
+
+    return model1,job,notEqNodeLabel
 
 
 if __name__=="__main__":
@@ -276,12 +304,11 @@ if __name__=="__main__":
             (25,    0.125,    "IM7-914C", 8,	4.0),
             ] 
     halfStructure=[0,0,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
-    # 注意宽度方向上的对称条件不知道为什么一直错误 所以宽度方向尽量不要使用半结构
     EquationOrDisplacement=0 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
     
 
     ls=(0.01,1,1.0) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
-    ws=(4.0,200,10.0)  #  层合板长度(x方向) , 单元数目，以及double seed ratio (center/end)
+    ws=(4.0,200,10.0) #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
     plies=[ (20,    0.175,    "T800-M21", 	10,	8.0),
             #(0,     0.005,   "Cohesive",   	1 ,	8.0),
             (-20,   0.175,    "T800-M21", 	10,	8.0),
@@ -289,37 +316,34 @@ if __name__=="__main__":
             #(0,     0.001,   "Cohesive",    1 ,	8.0),
             (20,    0.175,    "T800-M21", 	8 ,	8.0)] # 从顶部到底部的每层的角度、厚度、材料以及厚度
     halfStructure=[0,1,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
-    # 注意宽度方向上的对称条件不知道为什么一直错误 所以宽度方向尽量不要使用半结构
     EquationOrDisplacement=0 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
     
     ls=(0.01,1,1.0) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
-    ws=(20,50,20.0)  #  层合板长度(x方向) , 单元数目，以及double seed ratio (center/end)
+    ws=(20,50,20.0) #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
     plies=[ (10,    0.125,    "Pipes-Pagano", 	5,	1.0),
             (45,   0.125,    "Pipes-Pagano", 	5,	1.0),
             (45,   0.125,    "Pipes-Pagano", 	5,	1.0),
             (10,    0.125,    "Pipes-Pagano", 	5,	1.0)] # 从顶部到底部的每层的角度、厚度、材料以及厚度
     halfStructure=[0,1,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
-    # 注意宽度方向上的对称条件不知道为什么一直错误 所以宽度方向尽量不要使用半结构
     EquationOrDisplacement=0 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
     ex=0.01
     PBC=(EquationOrDisplacement==0)
     modelName='Laminate-10-45-YZSYMM-5-2'
 
     ls=(200,100,10) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
-    ws=(20,50,20.0)  #  层合板长度(x方向) , 单元数目，以及double seed ratio (center/end)
+    ws=(20,50,20.0)  #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
     plies=[ (10,    0.125,    "Pipes-Pagano", 	5,	1.0),
             (45,   0.125,    "Pipes-Pagano", 	5,	1.0),
             (45,   0.125,    "Pipes-Pagano", 	5,	1.0),
             (10,    0.125,    "Pipes-Pagano", 	5,	1.0)] # 从顶部到底部的每层的角度、厚度、材料以及厚度
     halfStructure=[0,0,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
-    # 注意宽度方向上的对称条件不知道为什么一直错误 所以宽度方向尽量不要使用半结构
     EquationOrDisplacement=1 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
     ex=0.01
     PBC=(EquationOrDisplacement==0)
     modelName='Laminate-10-45-Wanzheng-5'
 
     ls=(200,50,10) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
-    ws=(20,50,20.0)  #  层合板长度(x方向) , 单元数目，以及double seed ratio (center/end)
+    ws=(20,50,20.0)  #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
     plies=[ (25,    0.125,    "Pipes-Pagano", 	6,	1.0),
             (-25,   0.125,    "Pipes-Pagano", 	6,	1.0),
             (90,   0.0625,    "Pipes-Pagano", 	3,	1.0),
@@ -327,7 +351,6 @@ if __name__=="__main__":
             (-25,   0.125,    "Pipes-Pagano", 	6,	1.0),
             (25,    0.125,    "Pipes-Pagano", 	6,	1.0)] # 从顶部到底部的每层的角度、厚度、材料以及厚度
     halfStructure=[0,0,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
-    # 注意宽度方向上的对称条件不知道为什么一直错误 所以宽度方向尽量不要使用半结构
     EquationOrDisplacement=1 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
     ex=0.01
     PBC=(EquationOrDisplacement==0)
@@ -343,107 +366,74 @@ if __name__=="__main__":
             (0,     0.00625, "UMAT-Matrix",    1,	1.0),
             (45,    0.125,    "UMAT-Composite", 8,	4.0)] # 从顶部到底部的每层的角度、厚度、材料以及厚度
     halfStructure=[0,0,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
-    # 注意宽度方向上的对称条件不知道为什么一直错误 所以宽度方向尽量不要使用半结构
     EquationOrDisplacement=0 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
     ex=0.06
     PBC=(EquationOrDisplacement==0)
     modelName='ResinLayer45-Quan-RF-3'
-    """
+
     ls=(200,50,10) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
-    ws=(20,50,20.0)  #  层合板长度(x方向) , 单元数目，以及double seed ratio (center/end)
+    ws=(20,50,20.0)  #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
     plies=[ (0,    1.5,    "Pipes-Pagano", 	6,	1.0),
             (0,   1.5,    "Pipes-Pagano", 	6,	1.0),] # 从顶部到底部的每层的角度、厚度、材料以及厚度
     halfStructure=[0,0,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
-    # 注意宽度方向上的对称条件不知道为什么一直错误 所以宽度方向尽量不要使用半结构
     EquationOrDisplacement=1 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
     ex=0.01
     PBC=(EquationOrDisplacement==0)
     modelName='DCB-All'
 
-    ## 生成模型
-    model1=mdb.Model(name=modelName)
-    model1.setValues(description='Longitude: %s\n Width: %s \n Plies: angle\t thickness \t material \t seedsize In height \n %s'%(repr(ls),repr(ws),repr(plies)))
-    
-    for mat in materials:
-        if mat[1]:
-            material1=model1.Material(name=mat[0])
-            if len(mat[1])==9:
-                material1.Elastic(type=ENGINEERING_CONSTANTS, table=(mat[1], ))
-            elif len(mat[1])==2:
-                material1.Elastic(type=ISOTROPIC, table=(mat[1], ))
+    ls=(0.1,1,1.0) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
+    ws=(4,100,1.0)  #  层合板宽度(y方向) , 单元数目，以及double seed ratio (center/end)
+    plies=[ (45,    0.125,    "Pipes-Pagano", 	10,	1.0),
+            (-45,   0.125,    "Pipes-Pagano", 	10,	1.0),
+            (-45,   0.125,    "Pipes-Pagano", 	10,	1.0),
+            (45,    0.125,    "Pipes-Pagano", 	10,	1.0)] # 从顶部到底部的每层的角度、厚度、材料以及厚度
+    halfStructure=[0,0,1] # 每个tuple分别包含是否在x,y,z方向上是否使用半结构 0否 1是
+    EquationOrDisplacement=0 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
+    ex=0.01
+    PBC=(EquationOrDisplacement==0)
+    modelName='PP-3'
 
-    material1=model1.Material(name='UMAT-Composite',description='T300-7901')
-    material1.Depvar(n=15)
-    material1.UserMaterial(mechanicalConstants=
-        (4100.0, 4100.0, 4100.0, 0.46, 0.46, 0.46, 1404.0, 1404.0, 1404.0,  # Matrix Elastic
-        121.0, 210.0, 76.0, # Matrix : tensile compress shear 
-        276000.0, 19000.0, 19000.0, 0.2, 0.2, 0.36, 27000.0, 27000.0, 6985.0, # Fiber Elastic
-        4850.0, 3000.0, # fiber: tensile compress
-        0.575, # Vf
-        0.3, 0.3, # alpha,beta
-        6.0, # MSEG 基体折线段数目 
-        42.7,   53.7,   76.5,   101.5,  111.3,  125,# ETM(1,:)
-        4.1E3,  2.5E3,  2E3,    1.4E3,  0.8E3,  0.41E3, # ETM(2,:)
-        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,
-        2.32225977 ,5.00655592, 1.65594384 , 1.44730762 , 1.86990463 , 1.68355870 ,1.70323652, 54.4, 0.01 ,1 #KT22,KTT22,KC22,K12,K23,KT22BI,KC22BI, 界面的临界脱粘强度, 衰减系数
-    ))
+    ls=(0.1,1,1.0) #  层合板长度(x方向) , 单元数目，以及double seed ratio (end/center)
+    ws=(20,80,1.0)  #  层合板长度(x方向) , 单元数目，以及double seed ratio (center/end)
+    plies=[ (10,    0.125,    "T800-914", 	5,	1.0),
+            (0,    0.02,    "Epoxy914", 	1,	1.0),
+            (-10,    0.125,    "T800-914", 	5,	1.0),
+            (-10,    0.125,    "T800-914", 	5,	1.0),
+            (0,    0.02,    "Epoxy914", 	1,	1.0),
+            (10,    0.125,    "T800-914", 	5,	1.0),] # 从顶部到底部的每层的角度、厚度、材料以及厚度
+    halfStructure=[0,0,1] # 是否在x,y,z方向上是否使用半结构 0否 1是
 
-    material1=model1.Material(name='UMAT-Matrix',description='7901')
-    material1.Depvar(n=15)
-    material1.UserMaterial(mechanicalConstants=
-        (4100.0, 0.46, # Matrix Elastic
-        121.0, 210.0, 76.0, # Matrix : tensile compress shear 
-        6.0, # MSEG 基体折线段数目 
-        42.7,   53.7,   76.5,   101.5,  111.3,  125,# ETM(1,:)
-        4.1E3,  2.5E3,  2E3,    1.4E3,  0.8E3,  0.41E3, # ETM(2,:)
-        0.001, # 衰减系数
-        )
-    )
-    
-    m,j,notEqNodeLabel=modelLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=ex)
-    model1.rootAssembly.regenerate()
-
-    if PBC:
-        from Abaqus import lipeng
-        import time
-        oldtime=time.time()
-        #lipeng.Pipes_Pagano(m,ls[0])
-        SetINP,EquationINP=lipeng.Pipes_Pagano_INP(model1,notInclude=notEqNodeLabel,byNode=False)
-        print(len(SetINP),len(EquationINP))
-        j.writeInput(consistencyChecking=OFF)
-        
-        jobname=j.name
-        src=open("./%s.inp"%jobname,"r")
-        fname="./%s_Modified.inp"%jobname
-        dst=open(fname,"w+")
-
-        isEquationInserted=False
-        isSetInserted=False
-        instanceCnt=0
-        for line in src.readlines():
-            if not isEquationInserted and line.upper().startswith("*END ASSEMBLY"):
-                dst.write(EquationINP)
-                isEquationInserted=True
-            dst.write(line)
-            if not isSetInserted and line.upper().startswith("*END INSTANCE"):
-                if instanceCnt==1:
-                    dst.write(SetINP)
-                    isSetInserted=True
-                instanceCnt=instanceCnt+1
-    
-        src.close()
-        dst.close()
-        job=mdb.JobFromInputFile(name='%s_PBC'%jobname, inputFileName=fname)
-        print 'Elapsed:',time.time()-oldtime,'s' 
-
-    #lipeng.extractDataFromPath('Job-VCCT_PBC.odb','Path-z',['S11','S22','S33','S12','S13','S23'],prefix='+-25-90-Z-')
-    #lipeng.extractDataFromPath('Job-VCCT_PBC.odb','Path-y_+25_-25',['S11','S22','S33','S12','S13','S23'],prefix='+25_-25-Y-')
-    #lipeng.extractDataFromPath('Job-VCCT_PBC.odb','Path-y_-25-90',['S11','S22','S33','S12','S13','S23'],prefix='-25_90-Y-')
-    #lipeng.extractDataFromPath('Job-VCCT_PBC.odb','Path-y',['S11','S22','S33','S12','S13','S23'],prefix='mid-Y-')
-
-    #lipeng.extractDataFromPath('Job-+25_2_-25_2_90s_PBC.odb','Path-z',['S11','S22','S33','S12','S13','S23'],prefix='gjj-Z-')
+    EquationOrDisplacement=0 #在拉伸边界上使用 参考点Equation约束(0) 或者 位移边界(1)
+    ex=0.01
+    PBC=(EquationOrDisplacement==0)
+    modelName='Lorriot-10-1'
     """
-for i in range(1,14,1):
-	session.viewports['Viewport: 1'].odbDisplay.setFrame(step=0, frame=i)
-	lipeng.extractDataFromPath('Job-ResinLayer45-Quan-1_PBC.odb','Path-3',['S11','S22','S33','S12','S13','S23','NFORC1','NFORC2','NFORC3'],prefix='Resin-Quan-2-',suffix='-F%1d'%i,csyname='CSYC-1')
-    """
+    ls=(180,20,5.0)
+    ws=(25,40,5.0)
+
+    halfStructure=[0,0,0]
+    EquationOrDisplacement=1
+    ex=0.01
+    PBC=(EquationOrDisplacement==0)
+    modelName='YeLin-3'
+    
+    ind=14
+    modelNameFormat='YeLin-%d'
+    for plyAngles in [[30,-30,30,-30,30,-30,90,90,90,90,-30,30,-30,30,-30,30],
+                [45,-45,45,-45,0,0,90,90,90,90,0,0,-45,45,-45,45]]:
+        plyAngles=np.array(plyAngles)
+        plyThicks=0.135*np.ones_like(plyAngles)
+        for mat in ['T300-648','T300-634']:
+            modelName=modelNameFormat%ind
+            ind=ind+1
+
+            plies=[(plyAngles[i],plyThicks[i],mat,5,1.0) for i in range(len(plyAngles))]
+            
+            ## 生成模型
+            model1=mdb.Model(name=modelName)
+            model1.setValues(description='Longitude: %s\n Width: %s \n Plies: angle\t thickness \t material \t seedsize In height \n %s'%(repr(ls),repr(ws),repr(plies)))
+            
+            Materials(model1)
+
+            m,j,notEqNodeLabel=modelLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=ex)
+            model1.rootAssembly.regenerate()

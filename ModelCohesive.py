@@ -27,7 +27,7 @@ if __name__ == '__main__' and __package__ is None:
         sys.path.append(pth)
 
 from Abaqus.lipeng import edge2vector,labels2sequence
-
+from Abaqus import Materials,UMATMaterial
 			
 
 def modelCohesiveLaminate(model1,ls,ws,plies,halfStructure,EquationOrDisplacement,ex=0.1):
@@ -262,41 +262,9 @@ if __name__=="__main__":
     model1=mdb.Model(name=modelName)
     model1.setValues(description='Longitude: %s\n Width: %s \n Plies: angle\t thickness \t material \t seedsize In height \n %s'%(repr(ls),repr(ws),repr(plies)))
     
-    for mat in materials:
-        if mat[1]:
-            material1=model1.Material(name=mat[0])
-            if len(mat[1])==9:
-                material1.Elastic(type=ENGINEERING_CONSTANTS, table=(mat[1], ))
-            elif len(mat[1])==2:
-                material1.Elastic(type=ISOTROPIC, table=(mat[1], ))
+    Materials(model1)
+    UMATMaterial(model1)
 
-    material1=model1.Material(name='UMAT-Composite',description='T300-7901')
-    material1.Depvar(n=15)
-    material1.UserMaterial(mechanicalConstants=
-        (4100.0, 4100.0, 4100.0, 0.46, 0.46, 0.46, 1404.0, 1404.0, 1404.0,  # Matrix Elastic
-        121.0, 210.0, 76.0, # Matrix : tensile compress shear 
-        276000.0, 19000.0, 19000.0, 0.2, 0.2, 0.36, 27000.0, 27000.0, 6985.0, # Fiber Elastic
-        4850.0, 3000.0, # fiber: tensile compress
-        0.575, # Vf
-        0.3, 0.3, # alpha,beta
-        6.0, # MSEG 基体折线段数目 
-        42.7,   53.7,   76.5,   101.5,  111.3,  125,# ETM(1,:)
-        4.1E3,  2.5E3,  2E3,    1.4E3,  0.8E3,  0.41E3, # ETM(2,:)
-        0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,
-        2.32225977 ,5.00655592, 1.65594384 , 1.44730762 , 1.86990463 , 1.68355870 ,1.70323652, 54.4, 0.01 ,1 #KT22,KTT22,KC22,K12,K23,KT22BI,KC22BI, 界面的临界脱粘强度, 衰减系数
-    ))
-
-    material1=model1.Material(name='UMAT-Matrix',description='7901')
-    material1.Depvar(n=15)
-    material1.UserMaterial(mechanicalConstants=
-        (4100.0, 0.46, # Matrix Elastic
-        121.0, 210.0, 76.0, # Matrix : tensile compress shear 
-        6.0, # MSEG 基体折线段数目 
-        42.7,   53.7,   76.5,   101.5,  111.3,  125,# ETM(1,:)
-        4.1E3,  2.5E3,  2E3,    1.4E3,  0.8E3,  0.41E3, # ETM(2,:)
-        0.001, # 衰减系数
-        )
-    )
     ## Uguen A, Zubillaga L, Turon A, et al. Comparison of cohesive zone models used to predict delamination initiated from free-edges: validation against experimental results[C]//ECCM-16TH European Conference on Composite Materials. 2014.
     El,Et,Ez=130.0e3,8.0e3,8.0e3
     nult,nulz,nutz=0.31,0.31,0.45
@@ -347,4 +315,4 @@ if __name__=="__main__":
         src.close()
         dst.close()
         job=mdb.JobFromInputFile(name='%s_PBC'%jobname, inputFileName=fname)
-        print 'Elapsed:',time.time()-oldtime,'s' 
+        print('Elapsed:',time.time()-oldtime,'s' )

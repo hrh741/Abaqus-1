@@ -6,6 +6,7 @@ from abaqus import *
 from abaqusConstants import *
 import numpy as np
 import textwrap
+from itertools import chain
 
 ACISEPS=1e-6
 
@@ -18,6 +19,10 @@ def importAbqusModule():
   pth=os.path.dirname(curpath)
   if pth not in sys.path:
       sys.path.append(pth)
+
+#######################################################################
+##                              建模                                 ##
+#######################################################################
 
 def labels2sequence(labels,geomArr):
   """
@@ -47,6 +52,10 @@ def edge2vector(ns,e):
 	return [n1[i]-n2[i] for i in xrange(3)]
 
 def elementBound(elm):
+  """
+  返回单元几何界限
+  ()
+  """
   ns=elm.getNodes()
   xmin=min((n.coordinates[0] for n in ns))
   xmax=max((n.coordinates[0] for n in ns))
@@ -70,6 +79,9 @@ def prettyDir(obj):
   """
   return {"members":",".join(getattr(obj,'__members__',[])),"methods":"(),".join(getattr(obj,'__methods__',[]))+"()"}
 
+#######################################################################
+##                              后处理                               ##
+#######################################################################
 def generateNodePath(model1,coord=None,pthname=None):
   """
   返回coord中定义的直线的节点和直线的方向"x","y","z"或None
@@ -110,7 +122,6 @@ def generateEdgePath(model1,coord=None,pthname=None):
   The face edge index (one-based).
 
   The edge direction. A positive number specifies that the edge direction runs from the edge start node to the edge end node. A negative number specifies the opposite.
-
 
   """
   m1=model1
@@ -159,9 +170,10 @@ def extractDataFromPath(odb,pth,variables,prefix="",suffix="",csyname=None):
   scratchOdb = session.ScratchOdb(o)
   if csyname is None:
     csyname='CSYS-1'
-    scratchOdb.rootAssembly.DatumCsysByThreePoints(name=csyname, 
-        coordSysType=CARTESIAN, origin=(0.0, 0.0, 0.0), point1=(1.0, 0.0, 0.0), 
-        point2=(0.0, 1.0, 0.0))
+    if csyname not in scratchOdb.rootAssembly.datumCsyses:
+      scratchOdb.rootAssembly.DatumCsysByThreePoints(name=csyname, 
+          coordSysType=CARTESIAN, origin=(0.0, 0.0, 0.0), point1=(1.0, 0.0, 0.0), 
+          point2=(0.0, 1.0, 0.0))
   dtm = scratchOdb.rootAssembly.datumCsyses[csyname]
   session.viewports['Viewport: 1'].odbDisplay.basicOptions.setValues(
       transformationType=visualization.USER_SPECIFIED, datumCsys=dtm)
@@ -199,6 +211,43 @@ def extractDataFromPath(odb,pth,variables,prefix="",suffix="",csyname=None):
   #  except Exception as e:
   #    print("extract %s error: %s"%(sigma,e))  
 
+def AbaqusStressTrans(ls):
+  """
+    从新系应力分量转换到旧系应力分量
+    
+    ls[0],ls[1],ls[2]分别为新系的三个基在旧系的坐标
+    inds 为6个应力分量的下标
+  """
+  inds=((1,1),(2,2),(3,3),(1,2),(1,3),(2,3))
+  st=np.zeros((6,6),dtype='f')
+  for i in range(6):
+    i1,j1=inds[i]
+    for j in range(6):
+      i2,j2=inds[j]
+      st[i,j]=(ls[i2-1][i1-1]*ls[j2-1][j1-1]+ls[j2-1][i1-1]*ls[i2-1][j1-1])
+      if i2==j2:
+        st[i,j]=st[i,j]/2
+  return st
+
+def AbaqusStrainTrans(ls):
+  """
+    从新系应变分量转换到旧系应变分量
+    注意应变分量中剪切应变为2
+    
+    ls[0],ls[1],ls[2]分别为新系的三个基在旧系的坐标
+    inds 为6个应变分量的下标
+  """
+  inds=((1,1),(2,2),(3,3),(1,2),(1,3),(2,3))
+  st=np.zeros((6,6),dtype='f')
+  for i in range(6):
+    i1,j1=inds[i]
+    for j in range(6):
+      i2,j2=inds[j]
+      st[i,j]=(ls[i2-1][i1-1]*ls[j2-1][j1-1]+ls[j2-1][i1-1]*ls[i2-1][j1-1])
+      if i1==j1:
+        st[i,j]=st[i,j]/2
+  return st
+
 def calMean(jobname,setname=None):
   """
   提取odb中setname最后一帧的应力的平均值
@@ -227,43 +276,10 @@ def calMean(jobname,setname=None):
   closeOdb(odb)
   print '%s Mean:\n'%(setname),np.dot(evol,sigma)/np.sum(evol)
 
-def stressTrans(ls):
-  """
-    从新系应力分量转换到旧系应力分量
-    
-    ls[0],ls[1],ls[2]分别为新系的三个基在旧系的坐标
-    inds 为6个应力分量的下标
-  """
-  inds=((1,1),(2,2),(3,3),(1,2),(1,3),(2,3))
-  st=np.zeros((6,6),dtype='f')
-  for i in range(6):
-    i1,j1=inds[i]
-    for j in range(6):
-      i2,j2=inds[j]
-      st[i,j]=(ls[i2-1][i1-1]*ls[j2-1][j1-1]+ls[j2-1][i1-1]*ls[i2-1][j1-1])
-      if i2==j2:
-        st[i,j]=st[i,j]/2
-  return st
 
-def strainTrans(ls):
-  """
-    从新系应变分量转换到旧系应变分量
-    注意应变分量中剪切应变为2
-    
-    ls[0],ls[1],ls[2]分别为新系的三个基在旧系的坐标
-    inds 为6个应变分量的下标
-  """
-  inds=((1,1),(2,2),(3,3),(1,2),(1,3),(2,3))
-  st=np.zeros((6,6),dtype='f')
-  for i in range(6):
-    i1,j1=inds[i]
-    for j in range(6):
-      i2,j2=inds[j]
-      st[i,j]=(ls[i2-1][i1-1]*ls[j2-1][j1-1]+ls[j2-1][i1-1]*ls[i2-1][j1-1])
-      if i1==j1:
-        st[i,j]=st[i,j]/2
-  return st
-
+#######################################################################
+##                              inp修改                              ##
+#######################################################################
 def Pipes_Pagano(m1,l):
   """
   只适用于角铺层
@@ -395,6 +411,7 @@ def PBC(m1,byNode=False):
 
   问题：
      这个程序建立Equation没有问题，但是求解出来的结果会在位移边界上出现抖动，不连续，目前还不清楚原因
+     不建议使用
   ```
   m1=mdb.models["Model-1"]
   #SetINP,EquationINP,EquationPair,EquationPairDict=PeriodicBC(m1)
@@ -545,54 +562,19 @@ def PBC(m1,byNode=False):
       #EquationINP+=dataline.format(e3,1.0,e1,-1.0,RPDict[d2],-1.0)
   return SetINP,EquationINP
 
-def Ortho_Compliance(El,Et,Ez,nutz,nulz,nult,Gtz,Glz,Glt):
-  """
-  各项异性柔度矩阵,传统顺序 11 22 33 23 13 12
-  """
-  lamS=np.array([1/El,-nult/El,-nulz/El,0,0,0,
-                -nult/El,1/Et,-nutz/Et,0,0,0,
-                -nulz/El,-nutz/Et,1/Ez,0,0,0,
-                0,0,0,1/Gtz,0,0,
-                0,0,0,0,1/Glz,0,
-                0,0,0,0,0,1/Glt]).reshape((6,6))
-  return lamS
+from .Composite import *
 
-def Iso_Compliance(E,nu):
-  G=E/(2.0+2.0*nu)
-  return Ortho_Compliance(E,E,E,nu,nu,nu,G,G,G)
+def CompactTension():
+  """
+  Compact Tension 紧凑拉伸实验用于确定材料I型断裂韧性
+  
+  """
+  # ASTM  D5045 − 14
+  f1=lambda x: (2.0+x)*(0.886+4.64*x-13.32*x**2+14.72*x**3-5.6*x**4)/(1.0-x)**1.5
+  # 沈成康断裂力学 P107
+  f2=lambda x: 29.6*x**0.5-185.5*x**1.5+655.7*x**2.5-1017.0*x**3.5+638.9*x**4.5
+  # Stress Analysis of the Compact Specimen Including the Effects of Pin Loading
+  f3=lambda x: 4.55-40.32*x+414.7*x**2.0-1698*x**3+3781*x**4-4287.0*x**5+2017*x**6 
+  for x in xrange(3,7):
+    print 0.1*x,f1(0.1*x),f2(0.1*x),f3(0.1*x),f4(0.1*x)
 
-def Compliance(props,abaqus=False):
-  """
-  如果abaqus 为True,代表props中的顺序为abaqus的顺序, 11 22 33 12 13 23 12 13 23
-  """
-  if len(props)==2:
-    return Iso_Compliance(props[0],props[1])
-  elif len(props)==9:
-    if abaqus:
-      return Ortho_Compliance(props[0],props[1],props[2],
-                              props[5],props[4],props[3],
-                              props[8],props[7],props[6])
-    else:
-      return Ortho_Compliance(*props)
-
-def Suo(Exx,Eyy,Gxy,nuxy,a,h,B):
-  """
-  DCB的刚度
-  来自: Xu W , Guo Z Z . A simple method for determining the mode I interlaminar fracture toughness of composite without measuring the growing crack length[J]. Engineering Fracture Mechanics, 2018, 191:476-485.
-  注意DCB处于平面应变状态
-  这里的计算结果为平面应力状态的
-  """
-  nuyx=nuxy*Eyy/Exx
-  rho=np.sqrt(Exx*Eyy)/(2.0*Gxy)-np.sqrt(nuxy*nuyx)
-  beta=(0.677+0.146*(rho-1)-0.0178*(rho-1)**2+0.00242*(rho-1)**3)/np.power(Eyy/Exx,1/4)
-  a_h=a/h
-  C=1/(24/(B*Exx)*(a_h**3/3+beta*a_h**2+beta**2*a_h))
-  return rho,beta,C
-
-def linear_fit(x0,y0):
-  """
-  ax+b拟合x0,y0
-  """
-  res0=np.linalg.lstsq(np.vstack([x0,np.ones(len(x0))]).T,y0)
-  a,b=res0[0][0],res0[0][1]
-  return a,b
